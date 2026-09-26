@@ -1,0 +1,13 @@
+<!-- MIKO: Miko mark (torii) - themed icon monochrome layer -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="432"
+    android:viewportHeight="432">
+  <path
+      android:fillColor="#FFFFFFFF"
+      android:fillType="nonZero"
+      android:pathData="M112,126 Q216,158 320,126 L320,158 Q216,190 112,158 Z M142,162 H174 L170,306 H132 Z M258,162 H290 L300,306 H262 Z M122,226 H310 V254 H122 Z M206,172 H226 V230 H206 Z"
+      tools:ignore="VectorPath"/>
+</vector>

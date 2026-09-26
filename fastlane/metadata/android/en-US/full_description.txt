@@ -1,0 +1,53 @@
+Miko is a free and open source manga reader for Android.
+
+It is built on the Mihon / TachiyomiSY / Komikku lineage and brings together the parts each of those projects got right, then adds its own: image upscaling that runs on your phone, a warm new look, and a reader that stays out of the way.
+
+Miko hosts no content of its own. You add the sources you want through installable extensions, exactly as in the rest of this family of apps.
+
+READING
+* A configurable reader: multiple viewers, left-to-right, right-to-left and vertical/webtoon modes, page layouts, autoscroll and preloading
+* Automatic webtoon detection
+* Smart page background that adapts to the page's own colours
+* Read online, or download chapters and read completely offline
+
+IMAGE UPSCALING
+* On-device upscaling with waifu2x and Anime4K, running locally through NCNN with Vulkan acceleration — nothing leaves your phone
+* Optional remote upscaling if you would rather not spend phone battery on it
+* An Upscaling Hub to pick models, follow progress and manage chapters that have already been enhanced
+* Upscale on the fly while reading, or bake the result into your downloads
+
+LIBRARY
+* Categories, dynamic categories, drag-and-drop sorting and a powerful search with exclusions and exact-match quotes
+* Hidden categories, for keeping some things to yourself
+* Merge the same title from several sources into one entry
+* Source migration, including range selection
+* Feed tab: latest entries and saved searches from many sources at once
+* Scheduled library updates with grouped notifications, plus a screen showing what is about to be checked
+
+TRACKING
+* MyAnimeList, AniList, Kitsu, MangaUpdates, Shikimori, Bangumi, MangaDex, Kavita, Komga and Suwayomi
+* Two-way progress sync
+
+APPEARANCE
+* Miko's orange default theme, the original Classic Blue kept as an option, the dark Onyx Gold palette, and around twenty more colour schemes
+* Light, dark and system themes
+* Optional per-entry theming derived from each cover
+
+BACKUP AND SYNC
+* Local backups you can keep anywhere
+* Cloud sync through Google Drive or any WebDAV server
+
+PRIVACY
+* No analytics and no crash reporting. Telemetry is disabled at build level, not merely switched off in a settings screen.
+* No account required, no ads, no tracking
+* Incognito mode and an optional app lock
+
+OPEN SOURCE
+Miko is licensed under the GNU General Public License v3.0 (GPL-3.0-only). Parts of the codebase are inherited from Komikku, TachiyomiSY, Mihon and Tachiyomi, all licensed under the Apache License 2.0, and their attributions are preserved in the NOTICE file that ships with the source.
+
+Source code, releases and issue tracker: https://github.com/Kushro/miko
+
+DISCLAIMER
+The developers of this application have no affiliation with the content providers reachable through it, and this application hosts zero content.
+
+Requires Android 8.0 or higher.

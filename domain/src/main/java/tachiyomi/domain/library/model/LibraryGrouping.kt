@@ -1,0 +1,102 @@
+package tachiyomi.domain.library.model
+
+/**
+ * A type of grouping that can be applied as one layer of [LibraryGrouping]. Distinct from the
+ * legacy [LibraryGroup] (which turns a single grouping into separate library pages/tabs): these
+ * render as collapsible sections within a single category page.
+ */
+enum class LibraryGroupType {
+    SOURCE,
+    STATUS,
+    TRACK_STATUS,
+    GENRE,
+    TRACKER_RATING,
+    TITLE_DUPLICATES,
+    LANGUAGE,
+    AUTHOR,
+    ARTIST,
+    READ_PROGRESS,
+    DOWNLOAD_STATE,
+    DATE_ADDED,
+    LAST_READ,
+    LATEST_CHAPTER,
+    CATEGORY,
+
+    // MIKO -->
+    /** The user's own 1..5 star rating (`manga_ratings`), as opposed to [TRACKER_RATING]. */
+    LOCAL_RATING,
+
+    /** The user's own tags (`manga_tags`), as opposed to the source's [GENRE]s. */
+    LOCAL_TAGS,
+
+    /**
+     * **Ruiji** (類似, "similar") — the fuzzy counterpart of [TITLE_DUPLICATES]: clusters entries
+     * whose normalized titles reach a configurable similarity threshold (Sørensen–Dice over
+     * character bigrams, single-linkage), so near-duplicates like "Title" / "Title: Part 2" share
+     * a section titled after the shortest member. Single-entry clusters fold into one final
+     * "No similar titles" bucket, and the natural order is descending cluster size.
+     */
+    RUIJI_TITLES,
+    // MIKO <--
+}
+
+/** How sections within a single grouping layer are ordered. */
+enum class LibraryGroupSort {
+    /** Type-specific logical order (e.g. publication status order, rating buckets high to low). */
+    NATURAL,
+    ALPHABETICAL,
+    ITEM_COUNT,
+    /** By the most recent chapter upload date among the section's manga. */
+    LATEST_CHAPTER,
+    /** By the most recent date-added-to-library among the section's manga. */
+    DATE_ADDED,
+}
+
+data class LibraryGroupLayer(
+    val type: LibraryGroupType,
+    val sortBy: LibraryGroupSort = LibraryGroupSort.NATURAL,
+    val ascending: Boolean = true,
+)
+
+/**
+ * Up to 2 [LibraryGroupLayer]s applied within a library category page. An empty list means no
+ * grouping (today's default rendering: a flat grid/list of manga).
+ */
+data class LibraryGrouping(
+    val layers: List<LibraryGroupLayer> = emptyList(),
+) {
+
+    object Serializer {
+        fun deserialize(serialized: String): LibraryGrouping {
+            return LibraryGrouping.deserialize(serialized)
+        }
+
+        fun serialize(value: LibraryGrouping): String {
+            return value.serialize()
+        }
+    }
+
+    fun serialize(): String {
+        return layers.joinToString("|") { "${it.type.name}:${it.sortBy.name}:${it.ascending}" }
+    }
+
+    companion object {
+        val default = LibraryGrouping()
+
+        /** Max number of simultaneous grouping layers supported by the engine and settings UI. */
+        const val MAX_LAYERS = 2
+
+        fun deserialize(serialized: String): LibraryGrouping {
+            if (serialized.isBlank()) return default
+            val layers = serialized.split("|").mapNotNull { entry ->
+                val parts = entry.split(":")
+                if (parts.size != 3) return@mapNotNull null
+                val type = runCatching { LibraryGroupType.valueOf(parts[0]) }.getOrNull() ?: return@mapNotNull null
+                val sortBy = runCatching { LibraryGroupSort.valueOf(parts[1]) }.getOrNull() ?: LibraryGroupSort.NATURAL
+                val ascending = parts[2].toBooleanStrictOrNull() ?: true
+                LibraryGroupLayer(type, sortBy, ascending)
+            }.distinctBy { it.type }.take(MAX_LAYERS)
+            return LibraryGrouping(layers)
+        }
+    }
+}

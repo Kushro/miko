@@ -1,0 +1,11 @@
+-- MIKO --> Focus point inside a bookmarked page (C15).
+-- Fraction (0..1) of the bookmarked page's height where the user's attention was when the
+-- bookmark was created: the long-pressed point for the reader's long-press sheet, the centre of
+-- the viewport for the top-bar toggle. It is what the Favorites thumbnail and the page preview
+-- centre on. `scroll_fraction` (52.sqm) keeps meaning "top edge of the viewport" and is still
+-- what reopening the reader restores; the two are deliberately separate.
+-- NULL means "unknown": every bookmark made before this migration, and every bookmark made in a
+-- paged reading mode. Those fall back to the scroll_fraction band, then to the image centre.
+-- DDL kept byte-identical to page_bookmarks.sq.
+ALTER TABLE page_bookmarks ADD COLUMN focus_fraction REAL;
+-- MIKO <--

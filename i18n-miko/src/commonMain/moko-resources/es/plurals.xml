@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Similar-titles library grouping (C17) -->
+    <plurals name="group_ruiji_similar_suffix">
+        <item quantity="one">(+%1$d parecido)</item>
+        <item quantity="other">(+%1$d parecidos)</item>
+    </plurals>
+    <!-- Moments storage stats & source-visibility eye (C20) -->
+    <plurals name="moment_storage_usage">
+        <item quantity="one">%1$s en %2$d captura</item>
+        <item quantity="other">%1$s en %2$d capturas</item>
+    </plurals>
+    <plurals name="source_visibility_records">
+        <item quantity="one">%1$d registro</item>
+        <item quantity="other">%1$d registros</item>
+    </plurals>
+</resources>

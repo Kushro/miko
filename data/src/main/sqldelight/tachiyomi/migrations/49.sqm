@@ -1,0 +1,42 @@
+-- MIKO --> Local tags, local rating and per-page bookmarks (C9).
+-- DDL kept byte-identical to manga_tags.sq / manga_ratings.sq / page_bookmarks.sq.
+CREATE TABLE manga_tags(
+    _id INTEGER NOT NULL PRIMARY KEY,
+    manga_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    namespace TEXT,
+    created_at INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY(manga_id) REFERENCES mangas (_id)
+    ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX idx_manga_tags_manga_name ON manga_tags(manga_id, name COLLATE NOCASE);
+CREATE INDEX idx_manga_tags_name ON manga_tags(name COLLATE NOCASE);
+
+CREATE TABLE manga_ratings(
+    manga_id INTEGER NOT NULL PRIMARY KEY,
+    rating INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY(manga_id) REFERENCES mangas (_id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX idx_manga_ratings_rating ON manga_ratings(rating);
+
+CREATE TABLE page_bookmarks(
+    _id INTEGER NOT NULL PRIMARY KEY,
+    manga_id INTEGER NOT NULL,
+    chapter_id INTEGER NOT NULL,
+    page_index INTEGER NOT NULL,
+    image_url TEXT,
+    note TEXT,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY(manga_id) REFERENCES mangas (_id)
+    ON DELETE CASCADE,
+    FOREIGN KEY(chapter_id) REFERENCES chapters (_id)
+    ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX idx_page_bookmarks_chapter_page ON page_bookmarks(chapter_id, page_index);
+CREATE INDEX idx_page_bookmarks_manga_id ON page_bookmarks(manga_id);
+-- MIKO <--

@@ -1,0 +1,1 @@
+Free and open source manga reader with on-device image upscaling.

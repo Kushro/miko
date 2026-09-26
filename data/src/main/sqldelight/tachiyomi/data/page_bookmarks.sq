@@ -1,0 +1,121 @@
+-- MIKO — bookmarks on a single page of a chapter (Kotatsu-style), next to the per-chapter
+-- `chapters.bookmark` flag.
+--
+-- Identity for toggling is (chapter_id, page_index); `manga_id` is denormalized so the bookmarks
+-- screen can group by manga and delete per manga without joining chapters. `image_url` is the page
+-- URL at bookmark time and is only used for a best-effort thumbnail.
+--
+-- `scroll_fraction` (migration 52) is how far into the page the reader was, as a fraction (0..1)
+-- of the page height, not a pixel offset — see 52.sqm. NULL = unknown (pre-52 bookmarks and paged
+-- reading modes), which reopens at the top of the page.
+--
+-- `focus_fraction` (migration 53) is where on the page the user's attention was (the long-pressed
+-- point, or the viewport centre for the top-bar toggle), 0..1 of the page height — see 53.sqm. It
+-- only drives the Favorites thumbnail / preview centring; NULL = unknown.
+CREATE TABLE page_bookmarks(
+    _id INTEGER NOT NULL PRIMARY KEY,
+    manga_id INTEGER NOT NULL,
+    chapter_id INTEGER NOT NULL,
+    page_index INTEGER NOT NULL,
+    image_url TEXT,
+    note TEXT,
+    created_at INTEGER NOT NULL,
+    scroll_fraction REAL,
+    focus_fraction REAL,
+    FOREIGN KEY(manga_id) REFERENCES mangas (_id)
+    ON DELETE CASCADE,
+    FOREIGN KEY(chapter_id) REFERENCES chapters (_id)
+    ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX idx_page_bookmarks_chapter_page ON page_bookmarks(chapter_id, page_index);
+CREATE INDEX idx_page_bookmarks_manga_id ON page_bookmarks(manga_id);
+
+getAllWithRelations:
+SELECT
+PB._id,
+PB.manga_id,
+PB.chapter_id,
+PB.page_index,
+PB.image_url,
+PB.note,
+PB.created_at,
+PB.scroll_fraction,
+PB.focus_fraction,
+M.title,
+M.thumbnail_url,
+M.source,
+M.favorite,
+M.cover_last_modified,
+C.name AS chapter_name,
+C.chapter_number,
+PV.updated_at AS preview_updated_at
+FROM page_bookmarks PB
+JOIN mangas M
+ON PB.manga_id = M._id
+JOIN chapters C
+ON PB.chapter_id = C._id
+LEFT JOIN page_bookmark_previews PV
+ON PB._id = PV.page_bookmark_id
+ORDER BY PB.created_at DESC;
+
+getByMangaId:
+SELECT _id, manga_id, chapter_id, page_index, image_url, note, created_at, scroll_fraction, focus_fraction
+FROM page_bookmarks
+WHERE manga_id = :mangaId
+ORDER BY created_at DESC;
+
+getByChapterId:
+SELECT _id, manga_id, chapter_id, page_index, image_url, note, created_at, scroll_fraction, focus_fraction
+FROM page_bookmarks
+WHERE chapter_id = :chapterId
+ORDER BY page_index ASC;
+
+get:
+SELECT _id, manga_id, chapter_id, page_index, image_url, note, created_at, scroll_fraction, focus_fraction
+FROM page_bookmarks
+WHERE chapter_id = :chapterId AND page_index = :pageIndex
+LIMIT 1;
+
+insert:
+INSERT INTO page_bookmarks(manga_id, chapter_id, page_index, image_url, note, created_at, scroll_fraction, focus_fraction)
+VALUES (:mangaId, :chapterId, :pageIndex, :imageUrl, :note, :createdAt, :scrollFraction, :focusFraction);
+
+updateNote:
+UPDATE page_bookmarks
+SET note = :note
+WHERE _id = :id;
+
+-- Restore path (C20): replaceAll keeps the _id of a row that survives the replace so its capture
+-- in page_bookmark_previews survives too (the old delete-and-reinsert cascaded them away).
+replaceFields:
+UPDATE page_bookmarks
+SET image_url = :imageUrl,
+    note = :note,
+    created_at = :createdAt,
+    scroll_fraction = :scrollFraction,
+    focus_fraction = :focusFraction
+WHERE _id = :id;
+
+updateImageUrl:
+UPDATE page_bookmarks
+SET image_url = :imageUrl
+WHERE _id = :id;
+
+delete:
+DELETE FROM page_bookmarks
+WHERE _id = :id;
+
+deleteByPage:
+DELETE FROM page_bookmarks
+WHERE chapter_id = :chapterId AND page_index = :pageIndex;
+
+deleteByMangaId:
+DELETE FROM page_bookmarks
+WHERE manga_id = :mangaId;
+
+deleteAll:
+DELETE FROM page_bookmarks;
+
+selectLastInsertedRowId:
+SELECT last_insert_rowid();

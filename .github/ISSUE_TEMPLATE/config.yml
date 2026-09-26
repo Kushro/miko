@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 Miko README
+    url: https://github.com/Kushro/miko#readme
+    about: Features, build instructions and known limitations
+  - name: ❌ Help with extensions
+    url: https://komikku-app.github.io/docs/faq/browse/extensions
+    about: Miko uses the Komikku/Tachiyomi extension ecosystem; upstream docs still apply

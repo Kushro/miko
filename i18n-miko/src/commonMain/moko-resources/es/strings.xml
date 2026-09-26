@@ -1,0 +1,394 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="theme_classic_blue">Azul clásico</string>
+    <string name="theme_onyx_gold">Onyx Gold</string>
+    <string name="theme_amber">Ámbar</string>
+    <string name="theme_dattebayo_orange">Naranja Dattebayo</string>
+    <string name="miko_upstream_credit">Miko está construida sobre Komikku, TachiyomiSY y Mihon.</string>
+
+    <!-- MIKO -> -->
+    <!-- Modo de fuentes (extensiones vs parsers integrados de Kotatsu) -->
+    <string name="pref_source_mode">Modo de fuentes</string>
+    <string name="source_mode_summary">Elige qué sistemas de fuentes están activos: extensiones de Tachiyomi, parsers integrados de Kotatsu o ambos</string>
+    <string name="source_mode_both">Extensiones y parsers</string>
+    <string name="source_mode_extensions">Solo extensiones</string>
+    <string name="source_mode_parsers">Solo parsers integrados</string>
+
+    <!-- Ajustes por fuente de los parsers integrados de Kotatsu -->
+    <string name="kotatsu_pref_domain">Dominio</string>
+    <string name="kotatsu_pref_user_agent">User agent</string>
+    <string name="kotatsu_pref_show_suspicious">Mostrar contenido sospechoso</string>
+    <string name="kotatsu_pref_split_translations">Dividir capítulos por traducción</string>
+    <string name="kotatsu_pref_image_server">Servidor de imágenes preferido</string>
+    <string name="kotatsu_pref_disable_updates">Desactivar la búsqueda de actualizaciones</string>
+    <string name="kotatsu_pref_intercept_cloudflare">Interceptar desafíos de Cloudflare</string>
+    <string name="kotatsu_source_badge">Parser de Kotatsu</string>
+
+    <!-- Presets de fuentes (un preset es una categoría de fuentes usada como filtro exclusivo) -->
+    <string name="source_presets">Presets de fuentes</string>
+    <string name="source_preset_all">Todas las fuentes</string>
+    <string name="source_preset_manage">Gestionar presets…</string>
+    <string name="source_preset_active">Preset: %1$s</string>
+    <string name="source_preset_add_to_new">Agregar a preset nuevo…</string>
+    <string name="source_preset_empty">Este preset no tiene fuentes</string>
+    <string name="source_preset_created_and_added">Preset creado y fuente agregada</string>
+
+    <!-- Descargas: programación, límites y cuota (portado de Futon) -->
+    <string name="pref_category_download_scheduling">Programación y límites</string>
+    <string name="pref_download_only_when_charging">Solo cargando</string>
+    <string name="pref_download_only_when_charging_summary">Las descargas automáticas esperan al cargador. Iniciar la cola manualmente lo ignora</string>
+    <string name="pref_download_off_peak">Solo en horario de baja demanda</string>
+    <string name="pref_download_off_peak_summary">Las descargas automáticas solo corren dentro de la ventana de abajo. Iniciar la cola manualmente lo ignora</string>
+    <string name="pref_download_off_peak_start">Inicio del horario</string>
+    <string name="pref_download_off_peak_end">Fin del horario</string>
+    <string name="pref_download_speed_limit">Límite de velocidad de descarga</string>
+    <string name="pref_download_speed_limit_summary">Compartido por todas las descargas simultáneas. 0 = sin límite</string>
+    <string name="download_speed_limit_unlimited">Sin límite</string>
+    <string name="download_speed_limit_value">%1$s KiB/s</string>
+    <string name="pref_download_storage_quota">Cuota de almacenamiento para descargas</string>
+    <string name="pref_download_storage_quota_summary">En MiB. Al superarla se borran primero los capítulos descargados más antiguos. 0 = sin cuota</string>
+    <string name="download_storage_quota_dialog_hint">MiB (0 = sin cuota)</string>
+    <string name="download_storage_quota_too_low">La cuota no puede ser menor que el uso actual (%1$s)</string>
+    <string name="download_storage_usage">Uso de almacenamiento de descargas</string>
+    <string name="download_storage_usage_of_quota">%1$s usados de %2$s</string>
+    <string name="download_storage_usage_no_quota">%1$s usados</string>
+    <string name="download_storage_over_quota">Cuota superada</string>
+    <string name="download_notifier_text_only_charging">Esperando al cargador</string>
+    <string name="download_notifier_text_off_peak">Esperando el horario de baja demanda (%1$s – %2$s)</string>
+    <string name="download_notifier_text_quota_exceeded">Cuota de almacenamiento superada, descargas en pausa</string>
+    <string name="action_download_library_unread">Descargar todos los capítulos no leídos de la biblioteca</string>
+    <string name="download_library_unread_confirm">¿Encolar todos los capítulos no leídos de las %1$d series de tu biblioteca?</string>
+    <string name="download_library_unread_queued">%1$d capítulos encolados</string>
+    <string name="download_library_unread_nothing">Nada para descargar</string>
+
+    <!-- Presets de barra de navegación + selector de categoría (C5) -->
+    <string name="pref_nav_preset">Preset de la barra de navegación</string>
+    <string name="nav_preset_mihon">Mihon — Biblioteca · Actualizaciones · Historial · Explorar · Momentos · Más</string>
+    <string name="nav_preset_kotatsu">Kotatsu — Historial · Biblioteca · Explorar · Actualizaciones · Momentos · Más</string>
+    <string name="nav_preset_compact">Compacto — Biblioteca · Explorar · Momentos · Más</string>
+    <string name="nav_preset_custom">Personalizado — usar los interruptores de abajo</string>
+    <string name="action_display_category_dropdown">Selector de categoría en el título</string>
+
+    <!-- Features de Taison (C6): confiar en todas, enlaces de entrada, historial con alcance -->
+    <string name="ext_trust_all">Confiar en todas</string>
+    <string name="ext_trust_all_confirm_title">¿Confiar en todas las extensiones instaladas?</string>
+    <string name="ext_trust_all_confirm_message">Se confiará en todas las extensiones instaladas no confiables. Continuá solo si confiás en su origen.</string>
+    <string name="ext_trust_all_done">%1$d extensiones ahora confiables</string>
+    <string name="deep_link_source_not_installed">La fuente “%1$s” necesaria para abrir “%2$s” no está instalada. Instalá la extensión o buscá globalmente por título.</string>
+    <string name="deep_link_find_extension">Buscar extensión</string>
+    <string name="deep_link_search_by_title">Buscar por título</string>
+    <string name="deep_link_invalid">Este enlace no se puede abrir</string>
+    <string name="pref_history_scope_library_category">Seguir la categoría de la biblioteca</string>
+    <string name="history_scope_category">Categoría: %1$s</string>
+    <string name="history_delete_scope_title">Borrar historial</string>
+    <string name="history_delete_scope_everything">Todo</string>
+    <string name="history_delete_scope_shown">Solo las entradas mostradas (%1$s)</string>
+    <string name="history_delete_scope_shown_all">Solo las entradas mostradas</string>
+
+    <!-- Tipos de fuente, capacidades y vista de la pestaña Fuentes (C8) -->
+    <string name="source_kind">Tipo de fuente</string>
+    <string name="source_kind_local">Local</string>
+    <string name="source_kind_built_in">Integrada</string>
+    <string name="source_kind_built_in_dedicated">Integrada · dedicada</string>
+    <string name="source_kind_extension">Por extensión</string>
+    <string name="source_kind_extension_enhanced">Por extensión · mejorada</string>
+    <string name="source_kind_not_installed">No instalada</string>
+    <string name="source_kind_short_local">LOCAL</string>
+    <string name="source_kind_short_built_in">INTEGRADA</string>
+    <string name="source_kind_short_built_in_dedicated">DEDICADA</string>
+    <string name="source_kind_short_extension">EXT</string>
+    <string name="source_kind_short_extension_enhanced">EXT+</string>
+    <string name="source_kind_short_not_installed">N/D</string>
+    <string name="source_kind_desc_local">Lee archivos de este dispositivo</string>
+    <string name="source_kind_desc_built_in">Parser Kotatsu incluido en la app, sin instalar nada</string>
+    <string name="source_kind_desc_built_in_dedicated">Fuente incluida con código dedicado de Miko (fuente nativa o mejoras Miko)</string>
+    <string name="source_kind_desc_extension">Extensión Tachiyomi/Mihon instalada</string>
+    <string name="source_kind_desc_extension_enhanced">Extensión instalada envuelta con funciones extra (fuente delegada o mejoras Miko)</string>
+    <string name="source_kind_desc_not_installed">La fuente no está disponible en este dispositivo</string>
+    <string name="source_kind_all">Todos los tipos</string>
+    <string name="source_features">Capacidades</string>
+    <string name="source_feature_latest">Últimas actualizaciones</string>
+    <string name="source_feature_search">Búsqueda por texto</string>
+    <string name="source_feature_tags">Filtro por tags / géneros</string>
+    <string name="source_feature_tag_exclusion">Exclusión de tags</string>
+    <string name="source_feature_year">Filtro por año</string>
+    <string name="source_feature_author_search">Búsqueda por autor</string>
+    <string name="source_feature_multi_language">Varios idiomas</string>
+    <string name="source_feature_login">Inicio de sesión</string>
+    <string name="source_feature_configurable">Ajustes</string>
+    <string name="source_feature_related">Títulos relacionados</string>
+    <string name="source_feature_nsfw">Contenido adulto</string>
+    <string name="source_feature_metadata">Metadatos enriquecidos</string>
+    <string name="source_feature_follows">Seguimientos / sync de biblioteca</string>
+    <string name="source_feature_chapter_comments">Comentarios por capítulo</string>
+    <string name="source_feature_alternative_domains">Dominios alternativos</string>
+    <string name="source_features_none">Sin capacidades especiales detectadas</string>
+    <string name="source_features_loading">Detectando capacidades…</string>
+    <string name="source_info">Info de la fuente</string>
+    <string name="source_info_extension">Extensión: %1$s (v%2$s)</string>
+    <string name="source_info_parser">Parser Kotatsu: %1$s</string>
+    <string name="source_info_language">Idioma: %1$s</string>
+    <string name="source_info_id">ID: %1$s</string>
+    <string name="sources_display_settings">Vista de fuentes</string>
+    <string name="sources_group_by">Agrupar por</string>
+    <string name="sources_group_kind">Tipo de fuente</string>
+    <string name="sources_group_kind_language">Tipo de fuente y luego idioma</string>
+    <string name="sources_group_language">Idioma</string>
+    <string name="sources_group_none">Sin agrupar</string>
+    <string name="sources_sort_name">Nombre</string>
+    <string name="sources_sort_language">Idioma</string>
+    <string name="sources_sort_kind">Tipo de fuente</string>
+    <string name="sources_sort_features">Cantidad de capacidades</string>
+    <string name="sources_display_list">Lista</string>
+    <string name="sources_display_grid">Grilla</string>
+    <string name="sources_group_boxes">Cajas de grupo</string>
+    <string name="sources_collapsible_groups">Grupos colapsables</string>
+    <string name="sources_show_feature_chips">Mostrar iconos de capacidades</string>
+    <string name="sources_show_kind_badge">Mostrar badge de tipo de fuente</string>
+    <string name="sources_count">%1$d fuentes</string>
+    <string name="action_display_source_kind_badge">Badge de tipo de fuente</string>
+
+    <!-- Orden/ocultar leídos en historial, tags locales, rating local, marcadores de página (C9) -->
+    <string name="history_sort_last_read">Última lectura</string>
+    <string name="history_sort_title">Título</string>
+    <string name="history_sort_source">Fuente</string>
+    <string name="history_sort_chapter">Número de capítulo</string>
+    <string name="history_sort_duration">Tiempo de lectura</string>
+    <string name="history_hide_read">Ocultar ya leídos</string>
+    <string name="history_hide_read_summary">Oculta las entradas cuyo último capítulo leído está terminado</string>
+    <string name="local_tags">Mis tags</string>
+    <string name="remote_tags">Tags de la fuente</string>
+    <string name="tags_all">Tags</string>
+    <string name="add_tag">Agregar tag</string>
+    <string name="add_tag_hint">Nombre del tag</string>
+    <string name="add_tag_namespace_hint">Namespace (opcional)</string>
+    <string name="remove_tag">Quitar tag</string>
+    <string name="rename_tag">Renombrar tag</string>
+    <string name="tag_added">Tag agregado</string>
+    <string name="tag_removed">Tag quitado</string>
+    <string name="tag_already_exists">Esta entrada ya tiene ese tag</string>
+    <string name="tag_copy_from_source">Agregar a mis tags</string>
+    <string name="local_tags_empty">Todavía no hay tags — agregá uno</string>
+    <string name="filter_local_tag">Tag</string>
+    <string name="my_rating">Mi puntuación</string>
+    <string name="rating_none">Sin puntuar</string>
+    <string name="rating_clear">Quitar puntuación</string>
+    <string name="rating_stars">%1$d/5</string>
+    <string name="rating_remote">Puntuación de la fuente: %1$s</string>
+    <string name="sort_by_rating">Mi puntuación</string>
+    <string name="filter_rated">Puntuados</string>
+    <string name="filter_min_rating">Puntuación mínima</string>
+    <string name="group_by_rating">Mi puntuación</string>
+    <string name="group_unrated">Sin puntuar</string>
+    <string name="page_bookmarks">Marcadores de página</string>
+    <string name="bookmark_page">Marcar esta página</string>
+    <string name="unbookmark_page">Quitar marcador de página</string>
+    <string name="page_bookmark_added">Página marcada</string>
+    <string name="page_bookmark_removed">Marcador de página quitado</string>
+    <string name="page_bookmarks_empty">Todavía no hay marcadores de página</string>
+    <string name="page_bookmarks_empty_hint">Mantené presionada una página en el lector y elegí “Marcar esta página”</string>
+    <string name="page_bookmark_page">Página %1$d</string>
+    <string name="page_bookmark_open">Abrir página</string>
+    <string name="page_bookmark_delete">Borrar marcador</string>
+    <string name="page_bookmark_delete_all">Borrar todos los marcadores de página</string>
+    <string name="page_bookmark_delete_all_confirm">¿Borrar todos los marcadores de página? No se puede deshacer.</string>
+    <string name="page_bookmark_note">Nota</string>
+    <string name="page_bookmarks_count">%1$d páginas marcadas</string>
+    <string name="page_bookmarks_of_manga">Páginas marcadas</string>
+
+    <!-- Library tag filter/grouping, chapter bookmark types, Favorites section (C10) -->
+    <string name="filter_local_tags">Mis tags</string>
+    <string name="filter_local_tags_pick">Elegir tags</string>
+    <string name="filter_local_tags_empty">Todavía no hay tags en tu biblioteca</string>
+    <string name="group_by_local_tags">Mis tags</string>
+    <string name="group_no_local_tags">Sin tags</string>
+    <string name="chapter_bookmark_type">Tipo de marcador</string>
+    <string name="chapter_bookmark_type_hint">Marcar este capítulo como…</string>
+    <string name="chapter_bookmark_type_generic">Favorito</string>
+    <string name="chapter_bookmark_type_plot_twist">Plot twist</string>
+    <string name="chapter_bookmark_type_character_growth">Evolución de personaje</string>
+    <string name="chapter_bookmark_type_art">Arte precioso</string>
+    <string name="chapter_bookmark_type_set">Marcado como “%1$s”</string>
+    <string name="chapter_bookmark_type_change">Cambiar tipo de marcador</string>
+    <string name="chapter_bookmark_remove">Quitar marcador</string>
+    <string name="favorites">Momentos</string>
+    <string name="favorites_tab_pages">Páginas</string>
+    <string name="favorites_tab_chapters">Capítulos</string>
+    <string name="favorites_chapters_empty">Todavía no hay capítulos marcados</string>
+    <string name="favorites_chapters_empty_hint">Marcá un capítulo desde la lista de capítulos o desde el lector</string>
+    <string name="favorites_chapters_count">%1$d capítulos marcados</string>
+    <string name="favorites_filter_all">Todos</string>
+    <string name="favorites_open_chapter">Abrir capítulo</string>
+    <string name="page_bookmark_add_note">Agregar nota</string>
+    <string name="page_bookmark_edit_note">Editar nota</string>
+    <string name="page_bookmark_note_hint">Escribí algo sobre esta página</string>
+    <string name="page_bookmark_note_saved">Nota guardada</string>
+    <!-- C15: vista previa de marcador de página (mantener apretado en Favoritos) -->
+    <string name="page_bookmark_preview">Vista previa de la página</string>
+    <string name="page_bookmark_open_in_reader">Abrir en el lector</string>
+    <string name="page_bookmark_delete_confirm">¿Borrar este marcador de página?</string>
+    <string name="page_bookmark_loading_page">Trayendo la página desde la fuente…</string>
+    <string name="page_bookmark_page_unavailable">No se pudo cargar esta página</string>
+    <string name="page_bookmark_focus_percent">al %1$d%% de la página</string>
+    <string name="page_bookmark_miko_thinking">Miko, pensando en tu nota</string>
+    <string name="page_bookmark_miko_ara_ara">Miko, gratamente sorprendida</string>
+    <!-- C16: el resto de las expresiones de la miko (arte del usuario) -->
+    <string name="page_bookmark_miko_confused">Miko, confundida</string>
+    <string name="page_bookmark_miko_excited">Miko, emocionada</string>
+    <string name="page_bookmark_miko_pouting">Miko, haciendo pucherito</string>
+    <string name="page_bookmark_miko_amazed">Miko, maravillada</string>
+    <string name="page_bookmark_miko_determined">Miko, decidida</string>
+    <string name="page_bookmark_miko_sighing">Miko, suspirando</string>
+    <string name="page_bookmark_miko_crying">Miko, llorando</string>
+    <string name="page_bookmark_miko_wink">Miko, guiñando</string>
+
+    <!-- Enhance cover -->
+    <string name="enhance_cover">Mejorar</string>
+    <string name="enhance_cover_hint">Aumenta la resolución de esta portada y la guarda como portada de la entrada.</string>
+    <string name="enhance_cover_in_progress">Mejorando portada…</string>
+    <string name="enhance_cover_checking_server">Comprobando el servidor…</string>
+    <string name="enhance_cover_server_unavailable">Servidor no disponible — configuralo en los ajustes de Upscaling</string>
+    <string name="enhance_cover_failed">No se pudo mejorar la portada</string>
+
+    <!-- Cover viewer: redownload / recompress / size -->
+    <string name="action_redownload_cover">Redescargar</string>
+    <string name="redownload_cover_confirm_title">¿Redescargar la portada?</string>
+    <string name="redownload_cover_confirm_body">Se descarta la portada actual y se vuelve a descargar desde la fuente. Si es una portada personalizada o mejorada, se perderá.</string>
+    <string name="action_recompress_cover">Recomprimir</string>
+    <string name="recompress_cover_result">Portada recomprimida: %1$s → %2$s</string>
+    <string name="recompress_cover_no_gain">La portada ya está lo más chica posible</string>
+    <string name="recompress_cover_failed">No se pudo recomprimir la portada</string>
+
+    <!-- Mejoras de fuentes (Ajustes → Keiyoushi / Proveedores embebidos) -->
+    <string name="pref_category_keiyoushi">Keiyoushi</string>
+    <string name="pref_keiyoushi_summary">Mejoras para las fuentes dedicadas de este proveedor</string>
+    <string name="pref_category_embedded_providers">Proveedores embebidos</string>
+    <string name="pref_embedded_providers_summary">Mejoras para las fuentes embebidas, habilitadas por defecto</string>
+    <string name="enhancements_info">Las mejoras se activan por fuente. Al activar una fuente se habilitan todas sus mejoras actuales y las que se agreguen en el futuro.</string>
+    <string name="enhancements_group_toggle">Mejoras de %1$s</string>
+    <string name="enhancements_group_toggle_summary">Incluye: %1$s</string>
+    <string name="enhancements_group_extension_missing">Extensión no instalada</string>
+    <string name="enhancements_none_yet">Todavía no hay mejoras</string>
+    <string name="enhancements_none_yet_summary">Acá se listarán las mejoras para fuentes embebidas a medida que se agreguen.</string>
+    <string name="enhancements_shortcut">Mejoras de fuentes</string>
+    <string name="enhancement_group_asura_scans">Asura Scans</string>
+    <string name="enhancement_asura_rating">Puntuación del sitio</string>
+    <string name="enhancement_asura_comments">Comentarios (serie y capítulos)</string>
+    <string name="enhancement_group_comix">Comix</string>
+    <string name="enhancement_comix_comments">Comentarios (serie y capítulos)</string>
+
+    <!-- Comentarios del sitio (detalle del manga + hoja del lector) -->
+    <string name="comments">Comentarios</string>
+    <string name="comments_series">Comentarios de la serie</string>
+    <string name="comments_chapter">Comentarios del capítulo</string>
+    <string name="comments_sort_top">Mejores</string>
+    <string name="comments_sort_newest">Más recientes</string>
+    <string name="comments_count">%1$d comentarios</string>
+    <string name="comments_empty">Todavía no hay comentarios</string>
+    <string name="comments_load_more">Cargar más</string>
+    <string name="comments_show_replies">Ver %1$d respuestas</string>
+    <string name="comments_hide_replies">Ocultar respuestas</string>
+    <string name="comments_edited">editado</string>
+    <string name="comments_pinned">Fijado</string>
+    <string name="comments_spoiler">Spoiler — tocá para ver</string>
+    <string name="comments_error">No se pudieron cargar los comentarios</string>
+    <string name="comments_error_chapter_unresolved">No se pudo ubicar este capítulo en el sitio</string>
+    <string name="comments_open_image">Abrir imagen</string>
+
+    <!-- C12: chips de presets en la búsqueda global -->
+    <string name="source_preset_search_stale">El preset “%1$s” ya no existe — se muestran todas las fuentes</string>
+
+    <!-- C12: pestaña "Especial" de la biblioteca (ajustes independientes por categoría) -->
+    <string name="action_special">Especial</string>
+    <string name="category_special_settings_title">Ajustes independientes para esta categoría</string>
+    <string name="category_special_settings_summary">El filtrado, orden, apariencia y agrupación de «%1$s» dejan de seguir la configuración global y la del resto de categorías.</string>
+    <string name="category_special_settings_enabled_hint">Esta categoría usa sus propios ajustes. Los cambios que hagas en Filtrar, Ordenar, Mostrar y Grupo mientras esté seleccionada solo la afectan a ella.</string>
+    <string name="category_special_settings_disabled_hint">Esta categoría sigue la configuración global.</string>
+    <string name="category_special_reset_from_global">Volver a copiar la configuración global</string>
+    <string name="category_special_reset_done">Configuración global copiada</string>
+    <string name="category_special_unavailable">Seleccioná una categoría real para darle ajustes independientes.</string>
+    <string name="category_special_indicator">Especial</string>
+
+    <!-- C12: sincronización de favoritos de E-Hentai — mapeo slot upstream ↔ categoría local -->
+    <string name="pref_eh_favorites_mapping">Mapeo de categorías de favoritos</string>
+    <string name="pref_eh_favorites_mapping_summary_unconfigured">Sin configurar — la sincronización queda deshabilitada hasta mapear y habilitar al menos un slot upstream</string>
+    <string name="pref_eh_favorites_mapping_summary">%1$d de 10 slots upstream habilitados</string>
+    <string name="eh_favorites_mapping_dialog_title">Slots upstream ↔ categorías locales</string>
+    <string name="eh_favorites_mapping_dialog_message">ExHentai siempre tiene 10 slots de favoritos. Elegí con qué categoría local se sincroniza cada uno y habilitá solo los que quieras. Los slots vacíos en ExHentai se saltean.</string>
+    <string name="eh_favorites_mapping_slot">Slot %1$d</string>
+    <string name="eh_favorites_mapping_slot_count">%1$d galerías</string>
+    <string name="eh_favorites_mapping_upstream_unknown">Nombre desconocido — actualizá</string>
+    <string name="eh_favorites_mapping_upstream_empty">vacío en ExHentai</string>
+    <string name="eh_favorites_mapping_no_category">Sin mapear</string>
+    <string name="eh_favorites_mapping_pick_category">Categoría local</string>
+    <string name="eh_favorites_mapping_refresh">Actualizar desde ExHentai</string>
+    <string name="eh_favorites_mapping_auto">Mapear por orden</string>
+    <string name="eh_favorites_mapping_duplicate">Una categoría local solo puede mapearse a un slot habilitado: %1$s</string>
+    <string name="eh_favorites_mapping_refreshed">Slots upstream actualizados</string>
+    <string name="eh_favorites_mapping_refresh_failed">No se pudieron obtener los slots upstream</string>
+    <string name="eh_favorites_sync_not_configured">La sincronización de favoritos no está configurada. Mapeá los slots upstream a categorías locales en Ajustes → E-Hentai → Sincronización de favoritos y habilitá al menos uno.</string>
+    <string name="eh_favorites_sync_missing_categories">Estas categorías locales mapeadas ya no existen: %1$s. Corregí el mapeo en Ajustes → E-Hentai.</string>
+    <string name="eh_favorites_sync_open_settings">Abrir ajustes</string>
+    <string name="eh_favorites_sync_nothing_active">Ningún slot habilitado tiene galerías en ExHentai — nada que sincronizar</string>
+    <string name="eh_favorites_sync_skipped_empty">Se saltearon %1$d slots upstream vacíos</string>
+    <string name="eh_favorites_sync_notes_message">1. Solo se sincronizan las galerías de las categorías locales mapeadas a un slot upstream habilitado. Configurá el mapeo en Ajustes → E-Hentai → Mapeo de categorías de favoritos.\n\n2. Los slots vacíos en ExHentai se saltean en ambas direcciones hasta que tengan al menos una galería.\n\n3. La sincronización ya no cambia el nombre ni el orden de tus categorías locales.\n\n4. NO pongas una galería en dos categorías mapeadas: la sincronización se negará a correr.\n\n5. La sincronización va al ritmo que ExHentai permite: puede tardar y se limita para evitar bans. Dejá la app abierta.</string>
+    <!-- MIKO <- -->
+    <!-- MIKO -> C14 recommendation providers (Osusume / Uwasa / Tagu Osekkai / AniList-MAL) -->
+    <string name="pref_recommendation_system">Sistema de sugerencias</string>
+    <string name="pref_recommendation_system_summary_single">Un solo sistema: %1$s</string>
+    <string name="pref_recommendation_system_summary_multi">Multisistema priorizado: %1$s</string>
+    <string name="recommendation_info">Las sugerencias son los títulos relacionados que se muestran en la ficha de una entrada. Elegí qué sistema las arma, o combiná varios en orden de prioridad. Cada modo explica abajo cómo encuentra títulos.</string>
+    <string name="recommendation_dialog_title">Sistema de sugerencias</string>
+    <string name="recommendation_mode_multi">Multisistema priorizado</string>
+    <string name="recommendation_mode_multi_summary">Corre todos los sistemas habilitados a la vez; los resultados se muestran en este orden y, si dos sistemas encuentran el mismo título, gana el que está más arriba en la lista.</string>
+    <string name="recommendation_mode_single_hint">Solo corre el sistema seleccionado.</string>
+    <string name="recommendation_priority_hint">Marcá los sistemas a usar y arrastrá para definir su prioridad.</string>
+    <string name="recommendation_provider_osusume">Osusume</string>
+    <string name="recommendation_provider_osusume_summary">Los relacionados propios de la fuente más una búsqueda por cada palabra del título, todo junto (comportamiento por defecto de Komikku).</string>
+    <string name="recommendation_provider_uwasa">Uwasa</string>
+    <string name="recommendation_provider_uwasa_summary">Criterio Kotatsu: el bloque de relacionados del propio sitio; si no hay, solo la coincidencia más ajustada por palabra del título, descartando títulos que no la contienen. Los resultados se recuerdan durante la sesión.</string>
+    <string name="recommendation_provider_tagu_osekkai">Tagu Osekkai</string>
+    <string name="recommendation_provider_tagu_osekkai_summary">Títulos de la misma fuente que comparten los tags de esta entrada (géneros de la fuente y tus propios tags), ordenados por cuántos tags tienen en común.</string>
+    <!-- C19 Zokuhen (decreasing-prefix search + Dice similarity ranking) -->
+    <string name="recommendation_provider_zokuhen">Zokuhen</string>
+    <string name="recommendation_provider_zokuhen_summary">Busca el título sin su número de volumen final (“Blue Eyes 1” → “Blue Eyes”), acortando la búsqueda hasta encontrar algo, y conserva solo títulos muy parecidos ordenados por similitud — pensado para traer secuelas y entradas de la misma serie.</string>
+    <string name="recommendation_zokuhen_threshold">Zokuhen — umbral de similitud</string>
+    <string name="recommendation_provider_tracker">AniList/MAL</string>
+    <string name="recommendation_provider_tracker_summary">Recomendaciones de la comunidad de AniList y MyAnimeList. No pertenecen a una fuente: tocá una para buscarla en tus fuentes, mantené presionado para abrirla en el sitio.</string>
+    <string name="recommendation_reset">Restablecer</string>
+    <string name="recommendation_external_hint">Tocá para buscar en tus fuentes</string>
+    <!-- Similar-titles library grouping (C17) -->
+    <string name="group_by_ruiji_titles">Títulos parecidos</string>
+    <string name="group_ruiji_no_similar">Sin parecidos</string>
+    <string name="group_ruiji_similarity_threshold">Umbral de similitud</string>
+    <!-- Miko mascot toggle (C18) -->
+    <string name="pref_show_miko_chibis">Mostrar la mascota Miko</string>
+    <string name="pref_show_miko_chibis_summary">Dibuja los stickers chibi en las pantallas de Momentos (vistas previas de página y estados vacíos). Las notas de los marcadores se muestran igual</string>
+    <!-- C20: Momentos (rename, ojo de fuentes, capturas persistentes, stats de almacenamiento) -->
+    <string name="action_source_visibility">Mostrar u ocultar fuentes</string>
+    <string name="source_visibility_title">Fuentes mostradas</string>
+    <string name="source_visibility_search_hint">Buscar fuentes</string>
+    <string name="source_visibility_hide_all">Ocultar todas</string>
+    <string name="source_visibility_show_all">Mostrar todas</string>
+    <string name="source_visibility_no_records">Sin registros todavía</string>
+    <string name="source_visibility_presets">Presets</string>
+    <string name="source_visibility_save_preset">Guardar preset</string>
+    <string name="source_visibility_preset_name_hint">Nombre del preset</string>
+    <string name="source_visibility_delete_preset_confirm">¿Borrar el preset “%1$s”?</string>
+    <string name="backup_moment_captures">Capturas de momentos</string>
+    <string name="moment_storage_title">Capturas de momentos</string>
+    <string name="moment_storage_empty">Todavía no hay capturas guardadas — los momentos nuevos guardan lo que ves al marcar</string>
+    <string name="action_compress_moments">Comprimir todas las capturas</string>
+    <string name="compress_moments_confirm">¿Re-codificar todas las capturas a menor calidad para ahorrar espacio? No se puede deshacer.</string>
+    <string name="compress_moments_running">Comprimiendo… %1$d/%2$d</string>
+    <string name="compress_moments_result">Capturas comprimidas: %1$s → %2$s</string>
+    <string name="compress_moments_no_gain">No hay nada que ganar — las capturas ya son compactas</string>
+    <string name="action_backfill_moments">Generar capturas faltantes</string>
+    <string name="backfill_moments_running">Generando… %1$d/%2$d</string>
+    <string name="backfill_moments_result">Capturas generadas: %1$d de %2$d</string>
+    <string name="action_recompress_moment">Comprimir esta captura</string>
+    <string name="recompress_moment_result">Captura comprimida: %1$s → %2$s</string>
+    <string name="recompress_moment_no_gain">Ya es compacta — se mantiene como está</string>
+    <string name="recompress_moment_failed">No se pudo comprimir la captura</string>
+    <!-- MIKO <- -->
+</resources>

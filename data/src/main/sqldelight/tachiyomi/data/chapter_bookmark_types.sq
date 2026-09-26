@@ -1,0 +1,59 @@
+-- MIKO — the *kind* of a chapter bookmark, next to the inherited boolean `chapters.bookmark`.
+--
+-- The boolean stays the truth of "this chapter is a favorite"; this table only refines it. A
+-- missing row means `ChapterBookmarkType.GENERIC`, so nothing has to be written for the default
+-- case and the inherited `chapters` schema, mappers and backup are untouched.
+CREATE TABLE chapter_bookmark_types(
+    chapter_id INTEGER NOT NULL PRIMARY KEY,
+    type INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY(chapter_id) REFERENCES chapters (_id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX idx_chapter_bookmark_types_type ON chapter_bookmark_types(type);
+
+-- Un-bookmarking a chapter (any code path) drops its kind, so re-bookmarking starts GENERIC again.
+CREATE TRIGGER clear_chapter_bookmark_type_on_unbookmark
+AFTER UPDATE OF bookmark ON chapters
+WHEN new.bookmark = 0 AND old.bookmark != 0
+BEGIN
+    DELETE FROM chapter_bookmark_types WHERE chapter_id = new._id;
+END;
+
+-- Query names are qualified (`…Types`) because SQLDelight puts the generated result class of every
+-- partial-column query in one shared package: a bare `getAll` would clash with manga_ratings'.
+getAllTypes:
+SELECT chapter_id, type
+FROM chapter_bookmark_types;
+
+getTypesByMangaId:
+SELECT T.chapter_id, T.type
+FROM chapter_bookmark_types T
+JOIN chapters C
+ON C._id = T.chapter_id
+WHERE C.manga_id = :mangaId;
+
+getType:
+SELECT type
+FROM chapter_bookmark_types
+WHERE chapter_id = :chapterId;
+
+upsert:
+INSERT OR REPLACE INTO chapter_bookmark_types(chapter_id, type, updated_at)
+VALUES (:chapterId, :type, :updatedAt);
+
+delete:
+DELETE FROM chapter_bookmark_types
+WHERE chapter_id = :chapterId;
+
+getBookmarkedChaptersWithRelations:
+SELECT C._id AS chapterId, C.manga_id AS mangaId, C.name AS chapterName, C.chapter_number AS chapterNumber,
+       C.scanlator, C.read, C.date_upload AS dateUpload,
+       M.title AS mangaTitle, M.source, M.favorite, M.thumbnail_url AS thumbnailUrl, M.cover_last_modified AS coverLastModified,
+       COALESCE(T.type, 0) AS bookmarkType
+FROM chapters C
+JOIN mangas M ON M._id = C.manga_id
+LEFT JOIN chapter_bookmark_types T ON T.chapter_id = C._id
+WHERE C.bookmark = 1
+ORDER BY M.title COLLATE NOCASE ASC, C.chapter_number DESC;

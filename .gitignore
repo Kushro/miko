@@ -1,0 +1,49 @@
+# Build files
+.gradle
+#.vscode
+.kotlin
+build
+
+# IDE files
+*.iml
+.idea/*
+!.idea/icon.png
+/captures
+.history
+
+# MIKO --> Local AI assistant state and personal editor settings (not build inputs)
+.gemini/
+.claude/
+.opencode/
+.vscode/
+# MIKO <--
+
+# Configuration files
+local.properties
+
+# MIKO --> Local credentials; CI injects credentials via GitHub Actions secrets
+.env
+.env.*
+!.env.example
+**/google-services.json
+**/client_secrets.json
+*.keystore
+*.keystore.*
+*.p12
+*.pfx
+*.pem
+*.key
+# MIKO <--
+
+# macOS specific files
+.DS_Store
+
+*.jks
+app/standard/preview/*
+
+# MIKO --> native build cache (was tracked upstream by mistake)
+/app/.cxx/
+# MIKO <--
+
+# MIKO: locally signed APKs (scripts/sign-apk.sh)
+/dist/

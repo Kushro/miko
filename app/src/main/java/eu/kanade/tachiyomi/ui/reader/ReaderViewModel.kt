@@ -1,0 +1,2128 @@
+package eu.kanade.tachiyomi.ui.reader
+
+import android.app.Application
+import android.net.Uri
+import androidx.annotation.ColorInt
+import androidx.annotation.IntRange
+import androidx.compose.runtime.Immutable
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import eu.kanade.domain.base.BasePreferences
+import eu.kanade.domain.chapter.model.toDbChapter
+import eu.kanade.domain.manga.interactor.SetMangaViewerFlags
+import eu.kanade.domain.manga.model.readerOrientation
+import eu.kanade.domain.manga.model.readingMode
+import eu.kanade.domain.source.enhancement.SourceEnhancementRegistry
+import eu.kanade.domain.source.interactor.GetIncognitoState
+import eu.kanade.domain.sync.SyncPreferences
+import eu.kanade.domain.track.interactor.TrackChapter
+import eu.kanade.domain.track.service.TrackPreferences
+import eu.kanade.domain.ui.UiPreferences
+import eu.kanade.presentation.manga.components.ChapterDownloadAction
+import eu.kanade.tachiyomi.data.database.models.toDomainChapter
+import eu.kanade.tachiyomi.data.download.DownloadManager
+import eu.kanade.tachiyomi.data.download.DownloadProvider
+import eu.kanade.tachiyomi.data.download.model.Download
+import eu.kanade.tachiyomi.data.saver.Image
+import eu.kanade.tachiyomi.data.saver.ImageSaver
+import eu.kanade.tachiyomi.data.saver.Location
+import eu.kanade.tachiyomi.data.sync.SyncDataJob
+import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.source.online.MetadataSource
+import eu.kanade.tachiyomi.source.online.all.MergedSource
+import eu.kanade.tachiyomi.ui.reader.chapter.ReaderChapterItem
+import eu.kanade.tachiyomi.ui.reader.loader.ChapterLoader
+import eu.kanade.tachiyomi.ui.reader.loader.DownloadPageLoader
+import eu.kanade.tachiyomi.ui.reader.model.InsertPage
+import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
+import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.R2LPagerViewer
+import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer
+import eu.kanade.tachiyomi.util.bookmark.PageBookmarkPreviewCodec
+import eu.kanade.tachiyomi.util.chapter.filterDownloaded
+import eu.kanade.tachiyomi.util.chapter.removeDuplicates
+import eu.kanade.tachiyomi.util.editCover
+import eu.kanade.tachiyomi.util.lang.byteSize
+import eu.kanade.tachiyomi.util.storage.DiskUtil
+import eu.kanade.tachiyomi.util.storage.DiskUtil.MAX_FILE_NAME_BYTES
+import eu.kanade.tachiyomi.util.storage.cacheImageDir
+import eu.kanade.tachiyomi.util.waifu2x.EnhancementMode
+import eu.kanade.tachiyomi.util.waifu2x.EnhancementOverlayType
+import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache
+import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer
+import exh.metadata.metadata.RaisedSearchMetadata
+import exh.source.MERGED_SOURCE_ID
+import exh.source.getMainSource
+import exh.source.isEhBasedManga
+import exh.util.defaultReaderType
+import exh.util.mangaType
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import logcat.LogPriority
+import tachiyomi.core.common.preference.toggle
+import tachiyomi.core.common.storage.UniFileTempFileManager
+import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.launchNonCancellable
+import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.core.common.util.lang.withUIContext
+import tachiyomi.core.common.util.system.ImageUtil
+import tachiyomi.core.common.util.system.logcat
+import tachiyomi.decoder.ImageDecoder
+import tachiyomi.domain.chapter.interactor.GetChapterBookmarkTypes
+import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
+import tachiyomi.domain.chapter.interactor.GetMergedChaptersByMangaId
+import tachiyomi.domain.chapter.interactor.SetChapterBookmarkType
+import tachiyomi.domain.chapter.interactor.UpdateChapter
+import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.chapter.model.ChapterBookmarkType
+import tachiyomi.domain.chapter.model.ChapterUpdate
+import tachiyomi.domain.chapter.service.deduplicateByScanlatorPriority
+import tachiyomi.domain.chapter.service.getChapterSort
+import tachiyomi.domain.download.service.DownloadPreferences
+import tachiyomi.domain.history.interactor.GetNextChapters
+import tachiyomi.domain.history.interactor.UpsertHistory
+import tachiyomi.domain.history.model.HistoryUpdate
+import tachiyomi.domain.library.service.LibraryPreferences
+import tachiyomi.domain.manga.interactor.GetFlatMetadataById
+import tachiyomi.domain.manga.interactor.GetManga
+import tachiyomi.domain.manga.interactor.GetMergedMangaById
+import tachiyomi.domain.manga.interactor.GetMergedReferencesById
+import tachiyomi.domain.manga.interactor.GetPageBookmarks
+import tachiyomi.domain.manga.interactor.GetScanlatorPriorities
+import tachiyomi.domain.manga.interactor.TogglePageBookmark
+import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.source.service.SourceManager
+import tachiyomi.source.local.isLocal
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import java.time.Instant
+import java.util.Date
+
+/**
+ * Presenter used by the activity to perform background operations.
+ */
+class ReaderViewModel @JvmOverloads constructor(
+    private val savedState: SavedStateHandle,
+    private val sourceManager: SourceManager = Injekt.get(),
+    private val downloadManager: DownloadManager = Injekt.get(),
+    private val downloadProvider: DownloadProvider = Injekt.get(),
+    private val tempFileManager: UniFileTempFileManager = Injekt.get(),
+    private val imageSaver: ImageSaver = Injekt.get(),
+    val readerPreferences: ReaderPreferences = Injekt.get(),
+    private val basePreferences: BasePreferences = Injekt.get(),
+    private val downloadPreferences: DownloadPreferences = Injekt.get(),
+    private val trackPreferences: TrackPreferences = Injekt.get(),
+    private val trackChapter: TrackChapter = Injekt.get(),
+    private val getManga: GetManga = Injekt.get(),
+    private val getChaptersByMangaId: GetChaptersByMangaId = Injekt.get(),
+    private val getNextChapters: GetNextChapters = Injekt.get(),
+    private val upsertHistory: UpsertHistory = Injekt.get(),
+    private val updateChapter: UpdateChapter = Injekt.get(),
+    private val setMangaViewerFlags: SetMangaViewerFlags = Injekt.get(),
+    private val getIncognitoState: GetIncognitoState = Injekt.get(),
+    private val libraryPreferences: LibraryPreferences = Injekt.get(),
+    // SY -->
+    private val syncPreferences: SyncPreferences = Injekt.get(),
+    private val uiPreferences: UiPreferences = Injekt.get(),
+    private val getFlatMetadataById: GetFlatMetadataById = Injekt.get(),
+    private val getMergedMangaById: GetMergedMangaById = Injekt.get(),
+    private val getMergedReferencesById: GetMergedReferencesById = Injekt.get(),
+    private val getMergedChaptersByMangaId: GetMergedChaptersByMangaId = Injekt.get(),
+    // SY <--
+    // KMK -->
+    private val getScanlatorPriorities: GetScanlatorPriorities = Injekt.get(),
+    // KMK <--
+    // MIKO -->
+    private val getPageBookmarks: GetPageBookmarks = Injekt.get(),
+    private val togglePageBookmark: TogglePageBookmark = Injekt.get(),
+    private val getChapterBookmarkTypes: GetChapterBookmarkTypes = Injekt.get(),
+    private val setChapterBookmarkType: SetChapterBookmarkType = Injekt.get(),
+    // MIKO <--
+) : ViewModel() {
+
+    private val mutableState = MutableStateFlow(State())
+    val state = mutableState.asStateFlow()
+
+    private val eventChannel = Channel<Event>()
+    val eventFlow = eventChannel.receiveAsFlow()
+
+    /**
+     * The manga loaded in the reader. It can be null when instantiated for a short time.
+     */
+    val manga: Manga?
+        get() = state.value.manga
+
+    val currentChapter: Chapter?
+        get() = state.value.currentChapter?.chapter?.toDomainChapter()
+
+    // KMK -->
+    fun getSourceHeaders(): Map<String, String> {
+        val source = manga?.let { sourceManager.get(it.source) } as? HttpSource ?: return emptyMap()
+        return buildMap { for (i in 0 until source.headers.size) put(source.headers.name(i), source.headers.value(i)) }
+    }
+    // KMK <--
+
+    /**
+     * The chapter id of the currently loaded chapter. Used to restore from process kill.
+     */
+    private var chapterId = savedState.get<Long>("chapter_id") ?: -1L
+        set(value) {
+            savedState["chapter_id"] = value
+            field = value
+        }
+
+    /**
+     * The visible page index of the currently loaded chapter. Used to restore from process kill.
+     */
+    private var chapterPageIndex = savedState.get<Int>("page_index") ?: -1
+        set(value) {
+            savedState["page_index"] = value
+            field = value
+        }
+
+    // KMK -->
+    fun handleDownloadAction(chapter: Chapter, action: ChapterDownloadAction) {
+        when (action) {
+            ChapterDownloadAction.START -> downloadChapter(chapter)
+            ChapterDownloadAction.START_NOW -> downloadManager.startDownloadNow(chapter.id)
+            ChapterDownloadAction.CANCEL -> cancelDownload(chapter.id)
+            ChapterDownloadAction.DELETE -> deleteChapter(chapter)
+        }
+    }
+
+    /**
+     * @param chapter the chapter to download.
+     */
+    private fun downloadChapter(chapter: Chapter) {
+        viewModelScope.launch {
+            val manga = manga?.let {
+                if (it.source == MERGED_SOURCE_ID) {
+                    state.value.mergedManga?.get(chapter.mangaId) ?: return@launch
+                } else {
+                    it
+                }
+            } ?: return@launch
+            downloadManager.downloadChapters(manga, listOf(chapter))
+            // MIKO --> manual download from the reader: bypass charging/off-peak this once
+            downloadManager.startDownloads(force = true)
+            // MIKO <--
+        }
+    }
+
+    private fun cancelDownload(chapterId: Long) {
+        viewModelScope.launch {
+            val activeDownload = downloadManager.getQueuedDownloadOrNull(chapterId) ?: return@launch
+            downloadManager.cancelQueuedDownloads(listOf(activeDownload))
+            // TODO: updateDownloadState(activeDownload.apply { status = Download.State.NOT_DOWNLOADED })
+        }
+    }
+
+    private fun deleteChapter(chapter: Chapter) {
+        viewModelScope.launchNonCancellable {
+            try {
+                val manga = if (manga?.source == MERGED_SOURCE_ID) {
+                    state.value.mergedManga?.get(chapter.mangaId) ?: return@launchNonCancellable
+                } else {
+                    manga ?: return@launchNonCancellable
+                }
+                val source = sourceManager.get(manga.source) ?: return@launchNonCancellable
+                downloadManager.deleteChapters(
+                    listOf(chapter),
+                    manga,
+                    source,
+                    ignoreCategoryExclusion = true,
+                )
+//                // KMK -->
+//                if (source.isLocal()) {
+//                    // TODO: Refresh chapters state for Local source
+//                    fetchChaptersFromSource()
+//                }
+//                // KMK <--
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e)
+            }
+        }
+    }
+    // KMK <--
+
+    /**
+     * The chapter loader for the loaded manga. It'll be null until [manga] is set.
+     */
+    private var loader: ChapterLoader? = null
+
+    /**
+     * The time the chapter was started reading
+     */
+    private var chapterReadStartTime: Long? = null
+
+    private var chapterToDownload: Download? = null
+
+    private val unfilteredChapterList by lazy {
+        val manga = manga!!
+        runBlocking {
+            // KMK -->
+            if (manga.source == MERGED_SOURCE_ID) {
+                getMergedChaptersByMangaId.await(manga.id, dedupe = false, applyFilter = false)
+            } else {
+                getChaptersByMangaId.await(manga.id, applyFilter = false)
+            }
+            // KMK <--
+        }
+    }
+
+    /**
+     * Chapter list for the active manga. It's retrieved lazily and should be accessed for the first
+     * time in a background thread to avoid blocking the UI.
+     */
+    private val chapterList by lazy {
+        val manga = manga!!
+        // SY -->
+        val (rawChapters, mangaMap) = runBlocking {
+            if (manga.source == MERGED_SOURCE_ID) {
+                getMergedChaptersByMangaId.await(manga.id, applyFilter = true) to
+                    state.value.mergedManga
+            } else {
+                getChaptersByMangaId.await(manga.id, applyFilter = true) to null
+            }
+        }
+        fun isChapterDownloaded(chapter: Chapter): Boolean {
+            val chapterManga = mangaMap?.get(chapter.mangaId) ?: manga
+            return downloadManager.isChapterDownloaded(
+                chapterName = chapter.name,
+                chapterScanlator = chapter.scanlator,
+                chapterUrl = chapter.url,
+                mangaTitle = chapterManga.ogTitle,
+                sourceId = chapterManga.source,
+            )
+        }
+        // SY <--
+
+        val selectedChapter = rawChapters.find { it.id == chapterId }
+            ?: error("Requested chapter of id $chapterId not found in chapter list")
+
+        // KMK -->
+        val chapters = if (manga.scanlatorPriorityMode) {
+            val priorities = runBlocking { getScanlatorPriorities.await(manga.id) }
+            rawChapters.deduplicateByScanlatorPriority(priorities).let { deduped ->
+                // The user may have manually opened a losing duplicate; keep it reachable.
+                if (deduped.any { it.id == selectedChapter.id }) deduped else deduped + selectedChapter
+            }
+        } else {
+            rawChapters
+        }
+        // KMK <--
+
+        val chaptersForReader = when {
+            (readerPreferences.skipRead().get() || readerPreferences.skipFiltered().get()) -> {
+                val filteredChapters = chapters.filterNot {
+                    when {
+                        readerPreferences.skipRead().get() && it.read -> true
+                        readerPreferences.skipFiltered().get() -> {
+                            (manga.unreadFilterRaw == Manga.CHAPTER_SHOW_READ && !it.read) ||
+                                (manga.unreadFilterRaw == Manga.CHAPTER_SHOW_UNREAD && it.read) ||
+                                // SY -->
+                                (
+                                    manga.downloadedFilterRaw == Manga.CHAPTER_SHOW_DOWNLOADED &&
+                                        !isChapterDownloaded(it)
+                                    ) ||
+                                (
+                                    manga.downloadedFilterRaw == Manga.CHAPTER_SHOW_NOT_DOWNLOADED &&
+                                        isChapterDownloaded(it)
+                                    ) ||
+                                // SY <--
+                                (manga.bookmarkedFilterRaw == Manga.CHAPTER_SHOW_BOOKMARKED && !it.bookmark) ||
+                                (manga.bookmarkedFilterRaw == Manga.CHAPTER_SHOW_NOT_BOOKMARKED && it.bookmark)
+                        }
+                        else -> false
+                    }
+                }
+
+                if (filteredChapters.any { it.id == chapterId }) {
+                    filteredChapters
+                } else {
+                    filteredChapters + listOf(selectedChapter)
+                }
+            }
+            else -> chapters
+        }
+
+        chaptersForReader
+            .sortedWith(getChapterSort(manga, sortDescending = false))
+            .run {
+                if (readerPreferences.skipDupe().get()) {
+                    removeDuplicates(selectedChapter)
+                } else {
+                    this
+                }
+            }
+            .run {
+                if (basePreferences.downloadedOnly().get()) {
+                    filterDownloaded(manga, mangaMap)
+                } else {
+                    this
+                }
+            }
+            .map { it.toDbChapter() }
+            .map(::ReaderChapter)
+    }
+
+    val incognitoMode: Boolean by lazy { getIncognitoState.await(manga?.source) }
+    private val downloadAheadAmount = downloadPreferences.autoDownloadWhileReading().get()
+
+    init {
+        // To save state
+        state.map { it.viewerChapters?.currChapter }
+            .distinctUntilChanged()
+            .filterNotNull()
+            // SY -->
+            .drop(1) // allow the loader to set the first page and chapter id
+            // SY <-
+            .onEach { currentChapter ->
+                if (chapterPageIndex >= 0) {
+                    // Restore from SavedState
+                    currentChapter.requestedPage = chapterPageIndex
+                } else if (!currentChapter.chapter.read) {
+                    currentChapter.requestedPage = currentChapter.chapter.last_page_read
+                }
+                chapterId = currentChapter.chapter.id!!
+            }
+            .launchIn(viewModelScope)
+
+        // MIKO --> Page bookmarks of the chapter being read, re-subscribed on every chapter change
+        // so the reader UI can tell whether the visible page is bookmarked.
+        state.map { it.currentChapter?.chapter?.id }
+            .distinctUntilChanged()
+            .flatMapLatest { currentChapterId ->
+                if (currentChapterId == null) {
+                    flowOf(emptySet<Int>())
+                } else {
+                    getPageBookmarks.subscribeByChapter(currentChapterId)
+                        .map { bookmarks -> bookmarks.mapTo(mutableSetOf()) { it.pageIndex } }
+                }
+            }
+            .onEach { pages ->
+                mutableState.update { it.copy(bookmarkedPages = pages) }
+            }
+            .launchIn(viewModelScope)
+
+        // Kinds of the chapter bookmarks. One subscription for the whole reader session (not per
+        // chapter): the top bar only needs the kind of the chapter being read, but the chapter list
+        // dialog shows every one of them. Library-wide (keyed by chapter id, non-generic kinds
+        // only) rather than per manga because a merged entry reads chapters of its child mangas.
+        state.map { it.manga?.id }
+            .distinctUntilChanged()
+            .flatMapLatest { id ->
+                if (id == null) {
+                    flowOf(emptyMap<Long, ChapterBookmarkType>())
+                } else {
+                    getChapterBookmarkTypes.subscribeAll()
+                }
+            }
+            .onEach { types ->
+                mutableState.update { it.copy(chapterBookmarkTypes = types) }
+            }
+            .launchIn(viewModelScope)
+        // MIKO <--
+
+        // SY -->
+        state.mapLatest { it.ehAutoscrollFreq }
+            .distinctUntilChanged()
+            .drop(1)
+            .onEach { text ->
+                val parsed = text.toDoubleOrNull()
+
+                if (parsed == null || parsed <= 0 || parsed > 9999) {
+                    readerPreferences.autoscrollInterval().set(-1f)
+                    mutableState.update { it.copy(isAutoScrollEnabled = false) }
+                } else {
+                    readerPreferences.autoscrollInterval().set(parsed.toFloat())
+                    mutableState.update { it.copy(isAutoScrollEnabled = true) }
+                }
+            }
+            .launchIn(viewModelScope)
+        // SY <--
+
+        // KMK -->
+        ImageEnhancementCache.maxCacheSizeMb = readerPreferences.enhancementCacheMaxSizeMb().get()
+        // Migrate old per-boolean overlay prefs to the legacy detail-level pref on first run.
+        if (readerPreferences.enhancementOverlayDetail().get() == -1) {
+            val showPreload = readerPreferences.realCuganShowPreloadStatus().get()
+            val showProcessing = readerPreferences.realCuganShowStatus().get()
+            readerPreferences.enhancementOverlayDetail().set(
+                when {
+                    showPreload && showProcessing -> 3
+                    showPreload -> 2
+                    else -> 0
+                },
+            )
+        }
+        // Migrate the legacy detail level to the overlay-type pref (variants A-D).
+        if (readerPreferences.enhancementOverlayType().get() == -1) {
+            readerPreferences.enhancementOverlayType().set(
+                when (readerPreferences.enhancementOverlayDetail().get()) {
+                    1 -> EnhancementOverlayType.BAR
+                    2 -> EnhancementOverlayType.COUNTER
+                    3 -> EnhancementOverlayType.DETAILED
+                    else -> EnhancementOverlayType.OFF
+                },
+            )
+        }
+        // KMK <--
+
+        // KMK --> Keep the overlay counters and the page-slider notches fresh while visible,
+        // even when the user isn't turning pages (downloads/upscales finishing in background).
+        viewModelScope.launchIO {
+            while (true) {
+                val page = lastSelectedPage
+                val pages = lastSelectedPages
+                val status = if (readerPreferences.enhancementOverlayType().get() > EnhancementOverlayType.OFF) {
+                    if (page != null && pages != null) computePreloadStatus(page, pages) else null
+                } else {
+                    null
+                }
+                val (downloadNotch, upscaleNotch) = if (pages != null) {
+                    computeNotchFractions(pages)
+                } else {
+                    null to null
+                }
+                if (state.value.preloadStatus != status ||
+                    state.value.downloadNotchFraction != downloadNotch ||
+                    state.value.upscaleNotchFraction != upscaleNotch
+                ) {
+                    mutableState.update {
+                        it.copy(
+                            preloadStatus = status,
+                            downloadNotchFraction = downloadNotch,
+                            upscaleNotchFraction = upscaleNotch,
+                        )
+                    }
+                }
+                delay(500)
+            }
+        }
+        // KMK <--
+    }
+
+    override fun onCleared() {
+        // KMK --> Release BEFORE unref(): the enhancer queue is a process-wide singleton that
+        // outlives this reader, and unref() recycles the page loader (for archives, that unmaps
+        // the file). Dropping this reader's queued pages first also stops the worker from
+        // uploading a chapter nobody is reading any more.
+        ImageEnhancer.release(enhancerSession)
+        // KMK <--
+        val currentChapters = state.value.viewerChapters
+        if (currentChapters != null) {
+            currentChapters.unref()
+            chapterToDownload?.let {
+                downloadManager.addDownloadsToStartOfQueue(listOf(it))
+            }
+        }
+    }
+
+    // KMK -->
+    /** Token of the [ImageEnhancer] session this reader owns; see [ImageEnhancer.release]. */
+    @Volatile
+    private var enhancerSession: Int = -1
+    // KMK <--
+
+    /**
+     * Called when the user pressed the back button and is going to leave the reader. Used to
+     * trigger deletion of the downloaded chapters.
+     */
+    fun onActivityFinish() {
+        deletePendingChapters()
+    }
+
+    /**
+     * Whether this presenter is initialized yet.
+     */
+    fun needsInit(): Boolean {
+        return manga == null
+    }
+
+    /**
+     * Initializes this presenter with the given [mangaId] and [initialChapterId]. This method will
+     * fetch the manga from the database and initialize the initial chapter.
+     */
+    suspend fun init(
+        mangaId: Long,
+        initialChapterId: Long,
+        // SY -->
+        page: Int?,
+        // SY <--
+        // MIKO -->
+        scrollFraction: Float? = null,
+        // MIKO <--
+    ): Result<Boolean> {
+        if (!needsInit()) return Result.success(true)
+        // MIKO --> parked for the viewer's first positioning (see consumePendingScrollFraction)
+        pendingScrollFraction = scrollFraction
+        // MIKO <--
+        return withIOContext {
+            try {
+                val manga = getManga.await(mangaId)
+                if (manga != null) {
+                    // SY -->
+                    sourceManager.isInitialized.first { it }
+                    val source = sourceManager.getOrStub(manga.source)
+                    val metadataSource = source.getMainSource<MetadataSource<*, *>>()
+                    val metadata = if (metadataSource != null) {
+                        getFlatMetadataById.await(mangaId)?.raise(metadataSource.metaClass)
+                    } else {
+                        null
+                    }
+                    val mergedReferences = if (source is MergedSource) {
+                        runBlocking {
+                            getMergedReferencesById.await(manga.id)
+                        }
+                    } else {
+                        emptyList()
+                    }
+                    val mergedManga = if (source is MergedSource) {
+                        runBlocking {
+                            getMergedMangaById.await(manga.id)
+                        }.associateBy { it.id }
+                    } else {
+                        null
+                    }
+                    val relativeTime = uiPreferences.relativeTime().get()
+                    val autoScrollFreq = readerPreferences.autoscrollInterval().get()
+                    // SY <--
+                    mutableState.update {
+                        it.copy(
+                            manga = manga,
+                            // SY -->
+                            meta = metadata,
+                            mergedManga = mergedManga,
+                            dateRelativeTime = relativeTime,
+                            ehAutoscrollFreq = if (autoScrollFreq == -1f) {
+                                ""
+                            } else {
+                                autoScrollFreq.toString()
+                            },
+                            isAutoScrollEnabled = autoScrollFreq != -1f,
+                            // SY <--
+                            // MIKO -->
+                            commentsAvailable = Injekt.get<SourceEnhancementRegistry>()
+                                .commentsProvider(source)
+                                ?.supportsChapterComments == true,
+                            // MIKO <--
+                        )
+                    }
+                    if (chapterId == -1L) chapterId = initialChapterId
+
+                    val context = Injekt.get<Application>()
+                    // val source = sourceManager.getOrStub(manga.source)
+                    loader = ChapterLoader(
+                        context = context,
+                        downloadManager = downloadManager,
+                        downloadProvider = downloadProvider,
+                        manga = manga,
+                        source = source,
+                        // SY -->
+                        sourceManager = sourceManager,
+                        readerPrefs = readerPreferences,
+                        mergedReferences = mergedReferences,
+                        mergedManga = mergedManga,
+                        // SY <--
+                    )
+
+                    loadChapter(
+                        loader!!,
+                        chapterList.first { chapterId == it.chapter.id },
+                        // SY -->
+                        page,
+                        // SY <--
+                    )
+                    // KMK --> Reset image enhancer for new chapter
+                    enhancerSession = ImageEnhancer.reset(page ?: 0)
+                    // KMK <--
+                    Result.success(true)
+                } else {
+                    // Unlikely but okay
+                    Result.success(false)
+                }
+            } catch (e: Throwable) {
+                if (e is CancellationException) {
+                    throw e
+                }
+                Result.failure(e)
+            }
+        }
+    }
+
+    // SY -->
+    fun getChapters(): List<ReaderChapterItem> {
+        // KMK -->
+        val manga = manga ?: return emptyList()
+        val mangaList = state.value.mergedManga?.takeIf { it.isNotEmpty() } ?: mapOf(manga.id to manga)
+        // KMK <--
+
+        val currentChapter = getCurrentChapter()
+
+        return chapterList.map {
+            ReaderChapterItem(
+                chapter = it.chapter.toDomainChapter()!!,
+                // KMK -->
+                manga = mangaList[it.chapter.manga_id] ?: manga,
+                // KMK <--
+                isCurrent = it.chapter.id == currentChapter?.chapter?.id,
+                dateFormat = UiPreferences.dateFormat(uiPreferences.dateFormat().get()),
+            )
+        }
+    }
+    // SY <--
+
+    /**
+     * Loads the given [chapter] with this [loader] and updates the currently active chapters.
+     * Callers must handle errors.
+     */
+    private suspend fun loadChapter(
+        loader: ChapterLoader,
+        chapter: ReaderChapter,
+        // SY -->
+        page: Int? = null,
+        // SY <--
+    ): ViewerChapters {
+        loader.loadChapter(chapter /* SY --> */, page/* SY <-- */)
+
+        val chapterPos = chapterList.indexOf(chapter)
+        val newChapters = ViewerChapters(
+            chapter,
+            chapterList.getOrNull(chapterPos - 1),
+            chapterList.getOrNull(chapterPos + 1),
+        )
+
+        withUIContext {
+            mutableState.update {
+                // Add new references first to avoid unnecessary recycling
+                newChapters.ref()
+                it.viewerChapters?.unref()
+
+                chapterToDownload = cancelQueuedDownloads(newChapters.currChapter)
+                it.copy(
+                    viewerChapters = newChapters,
+                    bookmarked = newChapters.currChapter.chapter.bookmark,
+                )
+            }
+        }
+        return newChapters
+    }
+
+    /**
+     * Called when the user changed to the given [chapter] when changing pages from the viewer.
+     * It's used only to set this chapter as active.
+     */
+    private fun loadNewChapter(chapter: ReaderChapter) {
+        val loader = loader ?: return
+
+        viewModelScope.launchIO {
+            logcat { "Loading ${chapter.chapter.url}" }
+
+            updateHistory()
+            restartReadTimer()
+
+            try {
+                loadChapter(loader, chapter)
+                // KMK --> Reset image enhancer for new chapter
+                enhancerSession = ImageEnhancer.reset()
+                // KMK <--
+            } catch (e: Throwable) {
+                if (e is CancellationException) {
+                    throw e
+                }
+                logcat(LogPriority.ERROR, e)
+            }
+        }
+    }
+
+    fun loadNewChapterFromDialog(chapter: Chapter) {
+        viewModelScope.launchIO {
+            val newChapter = chapterList.firstOrNull { it.chapter.id == chapter.id } ?: return@launchIO
+            loadAdjacent(newChapter)
+        }
+    }
+
+    /**
+     * Called when the user is going to load the prev/next chapter through the toolbar buttons.
+     */
+    private suspend fun loadAdjacent(chapter: ReaderChapter) {
+        val loader = loader ?: return
+
+        logcat { "Loading adjacent ${chapter.chapter.url}" }
+
+        mutableState.update { it.copy(isLoadingAdjacentChapter = true) }
+        try {
+            withIOContext {
+                loadChapter(loader, chapter)
+            }
+        } catch (e: Throwable) {
+            if (e is CancellationException) {
+                throw e
+            }
+            logcat(LogPriority.ERROR, e)
+        } finally {
+            mutableState.update { it.copy(isLoadingAdjacentChapter = false) }
+        }
+    }
+
+    /**
+     * Called when the viewers decide it's a good time to preload a [chapter] and improve the UX so
+     * that the user doesn't have to wait too long to continue reading.
+     */
+    suspend fun preload(chapter: ReaderChapter) {
+        if (chapter.state is ReaderChapter.State.Loaded || chapter.state == ReaderChapter.State.Loading) {
+            return
+        }
+
+        /*
+         * This code is likely deprecated since once `chapter.pageLoader` is initialized with [HttpPageLoader],
+         * it would set `chapter.state` to `Loading` or `Loaded` and return early already.
+         */
+        if (chapter.pageLoader?.isLocal == false) {
+            val manga = state.value.mergedManga?.get(chapter.chapter.manga_id) ?: manga ?: return
+            val dbChapter = chapter.chapter
+            val isDownloaded = downloadManager.isChapterDownloaded(
+                dbChapter.name,
+                dbChapter.scanlator,
+                dbChapter.url,
+                // SY -->
+                manga.ogTitle,
+                // SY <--
+                manga.source,
+                skipCache = true,
+            )
+            if (isDownloaded) {
+                chapter.state = ReaderChapter.State.Wait
+            }
+        }
+
+        if (chapter.state != ReaderChapter.State.Wait && chapter.state !is ReaderChapter.State.Error) {
+            return
+        }
+
+        val loader = loader ?: return
+        try {
+            logcat { "Preloading ${chapter.chapter.url}" }
+            loader.loadChapter(chapter)
+        } catch (e: Throwable) {
+            if (e is CancellationException) {
+                throw e
+            }
+            return
+        }
+        eventChannel.trySend(Event.ReloadViewerChapters)
+    }
+
+    fun onViewerLoaded(viewer: Viewer?) {
+        mutableState.update {
+            it.copy(viewer = viewer)
+        }
+    }
+
+    /**
+     * Called every time a page changes on the reader. Used to mark the flag of chapters being
+     * read, update tracking services, enqueue downloaded chapter deletion, and updating the active chapter if this
+     * [page]'s chapter is different from the currently active.
+     */
+    fun onPageSelected(page: ReaderPage, currentPageText: String /* SY --> */, hasExtraPage: Boolean /* SY <-- */) {
+        // InsertPage doesn't change page progress
+        if (page is InsertPage) {
+            return
+        }
+
+        // SY -->
+        mutableState.update { it.copy(currentPageText = currentPageText) }
+        // SY <--
+
+        val selectedChapter = page.chapter
+        val pages = selectedChapter.pages ?: return
+
+        // Save last page read and mark as read if needed
+        viewModelScope.launchNonCancellable {
+            updateChapterProgress(selectedChapter, page/* SY --> */, hasExtraPage/* SY <-- */)
+        }
+
+        if (selectedChapter != getCurrentChapter()) {
+            logcat { "Setting ${selectedChapter.chapter.url} as active" }
+            loadNewChapter(selectedChapter)
+        }
+
+        val inDownloadRange = page.number.toDouble() / pages.size > 0.25
+        if (inDownloadRange) {
+            downloadNextChapters()
+        }
+
+        // KMK --> Pre-upscale a window of upcoming pages so navigation is instant.
+        prefetchEnhancement(page, pages)
+        // KMK <--
+
+        eventChannel.trySend(Event.PageChanged)
+    }
+
+    // KMK -->
+    private var prefetchJob: Job? = null
+
+    // Latest selected page + its chapter's page list, used by the preloading-status overlay poll
+    // so it can keep recomputing counters even while the user isn't turning pages.
+    @Volatile
+    private var lastSelectedPage: ReaderPage? = null
+
+    @Volatile
+    private var lastSelectedPages: List<ReaderPage>? = null
+
+    /**
+     * Enqueues the current page and everything after it for background enhancement (on-device
+     * or remote). The window is intentionally unbounded: each page is enqueued only once its
+     * download finishes, so the *page preload* setting ([ReaderPreferences.preloadSize], used by
+     * the page loader) is what actually paces how far ahead upscaling runs — upscaling simply
+     * follows the download frontier through the chapter.
+     * No-op when enhancement is off or "only upscale when downloading" is enabled (no live work).
+     */
+    private fun prefetchEnhancement(currentPage: ReaderPage, pages: List<ReaderPage>) {
+        // Remember the window context so the preloading-status overlay can keep refreshing
+        // its counters between page changes (background upscales completing).
+        lastSelectedPage = currentPage
+        lastSelectedPages = pages
+
+        val mode = readerPreferences.enhancementMode().get()
+        if (mode == EnhancementMode.NONE || readerPreferences.enhanceOnDownload().get()) return
+
+        val currentIndex = pages.indexOf(currentPage)
+        if (currentIndex == -1) return
+
+        ImageEnhancer.reprioritizeAround(currentPage.index)
+
+        // Cancel any in-flight prefetch from a previous page so stale waiters don't pile up.
+        prefetchJob?.cancel()
+
+        val count = pages.lastIndex - currentIndex
+        // Reading each page's source stream is blocking IO, so build/enqueue requests off the main thread.
+        prefetchJob = viewModelScope.launchIO {
+            val context = Injekt.get<Application>()
+            for (offset in 0..count) {
+                val target = pages.getOrNull(currentIndex + offset) ?: break
+                if (target.alreadyUpscaled) continue
+
+                // Pages ahead load asynchronously; rather than skip ones that aren't loaded yet,
+                // wait for each to reach Ready (or fail) so the whole window gets enhanced — not
+                // just the page(s) that happened to be loaded when the page changed.
+                val state = target.statusFlow.first {
+                    it == Page.State.Ready || it is Page.State.Error
+                }
+                if (state != Page.State.Ready) continue
+
+                // Enqueue the focused page as high priority so the queue's initial-target gate opens.
+                ImageEnhancer.enhance(context, target, highPriority = offset == 0)
+            }
+        }
+    }
+
+    /**
+     * Config hash for the current live/remote enhancement settings. Mirrors exactly the hash the
+     * [eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder] uses when it caches prefetched pages
+     * (note: live mode pins inputScale=100), so cache-hit checks here line up with reality.
+     */
+    private fun currentEnhancementConfigHash(): String {
+        return if (readerPreferences.enhancementMode().get() == EnhancementMode.REMOTE) {
+            ImageEnhancementCache.getRemoteConfigHash(
+                readerPreferences.remoteUpscalerHost().get(),
+                readerPreferences.remoteUpscalerPort().get(),
+            )
+        } else {
+            ImageEnhancementCache.getConfigHash(
+                noise = readerPreferences.realCuganNoiseLevel().get(),
+                scale = readerPreferences.realCuganScale().get(),
+                inputScale = 100,
+                model = readerPreferences.realCuganModel().get(),
+                maxWidth = readerPreferences.realCuganMaxSizeWidth().get(),
+                maxHeight = readerPreferences.realCuganMaxSizeHeight().get(),
+                resizeEnabled = readerPreferences.realCuganResizeLargeImage().get(),
+            )
+        }
+    }
+
+    /**
+     * Counts, for the pages *after* the current one that the page loader has already downloaded,
+     * how many have finished upscaling (cached, skipped, or baked-in at download) vs. are still
+     * queued/processing. The denominator is the download frontier itself — upscaling follows the
+     * page-preload setting, so "max" grows as more pages finish downloading. Returns null when
+     * live preloading doesn't apply (enhancement off, "only upscale when downloading", or reading
+     * an already-upscaled downloaded chapter), so the overlay hides.
+     */
+    private fun computePreloadStatus(currentPage: ReaderPage, pages: List<ReaderPage>): PreloadStatus? {
+        val mode = readerPreferences.enhancementMode().get()
+        // Preloading only runs when an enhancement mode is on and we're upscaling live in the reader.
+        if (mode == EnhancementMode.NONE || readerPreferences.enhanceOnDownload().get()) return null
+        // Reading an already-upscaled downloaded chapter: pages are served baked-in, nothing is
+        // preloaded live, so there's nothing to report.
+        if (currentPage.alreadyUpscaled) return null
+
+        val currentIndex = pages.indexOf(currentPage)
+        if (currentIndex == -1) return null
+
+        ImageEnhancementCache.init(Injekt.get<Application>())
+        val configHash = currentEnhancementConfigHash()
+
+        var loaded = 0
+        var loading = 0
+        var downloaded = 0
+        for (offset in 1..(pages.lastIndex - currentIndex)) {
+            val target = pages.getOrNull(currentIndex + offset) ?: break
+            val mangaId = target.chapter.chapter.manga_id ?: -1L
+            val chapterId = target.chapter.chapter.id ?: -1L
+            val variant = target.enhancementKeySuffix
+            when {
+                // Already upscaled (baked at download) — counts as finished, no live work needed.
+                target.alreadyUpscaled -> {
+                    downloaded++
+                    loaded++
+                }
+                mangaId == -1L || chapterId == -1L -> {
+                    // Can't key the cache/queue for this page; leave it out of the counts.
+                }
+                // Skipped pages never produce a cache entry (too large); treat as terminal/done so
+                // the counter isn't stuck below max forever.
+                ImageEnhancementCache.isCached(mangaId, chapterId, target.index, configHash, variant) ||
+                    ImageEnhancementCache.isSkipped(mangaId, chapterId, target.index, configHash, variant) -> {
+                    downloaded++
+                    loaded++
+                }
+                // Queued or actively being upscaled.
+                ImageEnhancer.hasRequest(mangaId, chapterId, target.index, variant) -> {
+                    downloaded++
+                    loading++
+                }
+                // Downloaded but not enqueued yet (the prefetch loop is about to pick it up).
+                target.status == Page.State.Ready -> downloaded++
+                // Not downloaded yet — outside the live window; the counter grows as the page
+                // loader advances.
+            }
+        }
+
+        // Nothing downloaded ahead (e.g. last page of the chapter) → hide the overlay.
+        if (downloaded <= 0) return null
+        return PreloadStatus(loaded = loaded, loading = loading, max = downloaded)
+    }
+
+    /**
+     * Chapter-wide fractions for the page-slider notch markers: how much of the chapter has
+     * been downloaded (page preload frontier) and how much has been upscaled. Either value is
+     * null when its marker is disabled or not applicable, which hides that notch.
+     */
+    private fun computeNotchFractions(pages: List<ReaderPage>): Pair<Float?, Float?> {
+        val total = pages.size
+        if (total == 0) return null to null
+
+        val downloadFraction = if (readerPreferences.showDownloadNotch().get()) {
+            pages.count { it.status == Page.State.Ready }.toFloat() / total
+        } else {
+            null
+        }
+
+        val mode = readerPreferences.enhancementMode().get()
+        val liveUpscaling = mode != EnhancementMode.NONE && !readerPreferences.enhanceOnDownload().get()
+        val upscaleFraction = if (liveUpscaling && readerPreferences.showUpscaleNotch().get()) {
+            ImageEnhancementCache.init(Injekt.get<Application>())
+            val configHash = currentEnhancementConfigHash()
+            pages.count { target ->
+                val mangaId = target.chapter.chapter.manga_id ?: -1L
+                val chapterId = target.chapter.chapter.id ?: -1L
+                val variant = target.enhancementKeySuffix
+                when {
+                    target.alreadyUpscaled -> true
+                    mangaId == -1L || chapterId == -1L -> false
+                    else ->
+                        ImageEnhancementCache.isCached(mangaId, chapterId, target.index, configHash, variant) ||
+                            ImageEnhancementCache.isSkipped(mangaId, chapterId, target.index, configHash, variant)
+                }
+            }.toFloat() / total
+        } else {
+            null
+        }
+
+        return downloadFraction to upscaleFraction
+    }
+    // KMK <--
+
+    private fun downloadNextChapters() {
+        if (downloadAheadAmount == 0) return
+        val manga = manga ?: return
+
+        // Only download ahead if current + next chapter is already downloaded too to avoid jank
+        if (getCurrentChapter()?.pageLoader !is DownloadPageLoader) return
+        val nextChapter = state.value.viewerChapters?.nextChapter?.chapter ?: return
+
+        // KMK -->
+        val mangas = state.value.mergedManga ?: mapOf(manga.id to manga)
+        val nextChapterManga = mangas[nextChapter.manga_id] ?: return
+        // KMK <--
+
+        viewModelScope.launchIO {
+            val isNextChapterDownloaded = downloadManager.isChapterDownloaded(
+                nextChapter.name,
+                nextChapter.scanlator,
+                nextChapter.url,
+                // KMK -->
+                nextChapterManga.ogTitle,
+                nextChapterManga.source,
+                // KMK <--
+            )
+            if (!isNextChapterDownloaded) return@launchIO
+
+            val chaptersToDownload = getNextChapters.await(manga.id, nextChapter.id!!).run {
+                if (readerPreferences.skipDupe().get()) {
+                    removeDuplicates(nextChapter.toDomainChapter()!!)
+                } else {
+                    this
+                }
+            }.take(downloadAheadAmount)
+
+            // KMK -->
+            chaptersToDownload.groupBy { it.mangaId }.forEach { (mangaId, chapters) ->
+                val chapterManga = mangas[mangaId] ?: return@forEach
+                downloadManager.downloadChapters(
+                    chapterManga,
+                    chapters,
+                )
+            }
+            // KMK <--
+        }
+    }
+
+    /**
+     * Removes [currentChapter] from download queue
+     * if setting is enabled and [currentChapter] is queued for download
+     */
+    private fun cancelQueuedDownloads(currentChapter: ReaderChapter): Download? {
+        return downloadManager.getQueuedDownloadOrNull(currentChapter.chapter.id!!)?.also {
+            downloadManager.cancelQueuedDownloads(listOf(it))
+        }
+    }
+
+    /**
+     * Determines if deleting option is enabled and nth to last chapter actually exists.
+     * If both conditions are satisfied enqueues chapter for delete.
+     *
+     * This deletes chapters from reading list (filtered, unduplicated if any set).
+     *
+     * @param currentChapter current chapter, which is going to be marked as read.
+     */
+    private fun deleteChapterIfNeeded(currentChapter: ReaderChapter) {
+        val removeAfterReadSlots = downloadPreferences.removeAfterReadSlots().get()
+        if (removeAfterReadSlots == -1) return
+
+        // Determine which chapter should be deleted and enqueue
+        val currentChapterPosition = chapterList.indexOf(currentChapter)
+        val chapterToDelete = chapterList.getOrNull(currentChapterPosition - removeAfterReadSlots)
+
+        // If chapter is completely read, no need to download it
+        chapterToDownload = null
+
+        if (chapterToDelete != null) {
+            enqueueDeleteReadChapters(chapterToDelete)
+        }
+    }
+
+    // KMK -->
+    /**
+     * Deletes duplicate chapters when `removeAfterReadSlots` = "Last read chapter" (0).
+     *
+     * Ignore the case where `removeAfterReadSlots` > 0 while `skipDupe` = true as we don't know
+     * where the chapters to be deleted are in the filtered [chapterList].
+     *
+     * For the case where `skipDupe` = false, chapters at should be deleted normally by [deleteChapterIfNeeded]
+     * based on the `removeAfterReadSlots` offset while the user is reading sequentially.
+     */
+    private fun deleteDupChapterIfNeeded(chapterToDelete: ReaderChapter) {
+        val removeAfterReadSlots = downloadPreferences.removeAfterReadSlots().get()
+        if (removeAfterReadSlots != 0) return
+        enqueueDeleteReadChapters(chapterToDelete)
+    }
+    // KMK <--
+
+    /**
+     * Saves the chapter progress (last read page and whether it's read)
+     * if incognito mode isn't on.
+     */
+    private suspend fun updateChapterProgress(
+        readerChapter: ReaderChapter,
+        page: Page,
+        // SY -->
+        hasExtraPage: Boolean,
+        // SY <--
+    ) {
+        val pageIndex = page.index
+        val syncTriggerOpt = syncPreferences.getSyncTriggerOptions()
+        val isSyncEnabled = syncPreferences.isSyncEnabled()
+
+        mutableState.update {
+            it.copy(currentPage = pageIndex + 1)
+        }
+        readerChapter.requestedPage = pageIndex
+        chapterPageIndex = pageIndex
+
+        if (!incognitoMode && page.status !is Page.State.Error) {
+            readerChapter.chapter.last_page_read = pageIndex
+
+            if (readerChapter.pages?.lastIndex == pageIndex ||
+                // SY -->
+                (hasExtraPage && readerChapter.pages?.lastIndex?.minus(1) == page.index)
+                // SY <--
+            ) {
+                updateChapterProgressOnComplete(readerChapter)
+
+                // SY -->
+                // Check if syncing is enabled for chapter read:
+                if (isSyncEnabled && syncTriggerOpt.syncOnChapterRead) {
+                    SyncDataJob.startNow(Injekt.get<Application>())
+                }
+                // SY <--
+            }
+
+            updateChapter.await(
+                ChapterUpdate(
+                    id = readerChapter.chapter.id!!,
+                    read = readerChapter.chapter.read,
+                    lastPageRead = readerChapter.chapter.last_page_read.toLong(),
+                ),
+            )
+
+            // SY -->
+            // Check if syncing is enabled for chapter open:
+            if (isSyncEnabled && syncTriggerOpt.syncOnChapterOpen && readerChapter.chapter.last_page_read == 0) {
+                SyncDataJob.startNow(Injekt.get<Application>())
+            }
+            // SY <--
+        }
+    }
+
+    private suspend fun updateChapterProgressOnComplete(readerChapter: ReaderChapter) {
+        readerChapter.chapter.read = true
+        // SY -->
+        if (manga?.isEhBasedManga() == true) {
+            viewModelScope.launchNonCancellable {
+                val chapterUpdates = unfilteredChapterList
+                    .filter { it.sourceOrder > readerChapter.chapter.source_order }
+                    .map { chapter ->
+                        ChapterUpdate(id = chapter.id, read = true)
+                    }
+                updateChapter.awaitAll(chapterUpdates)
+            }
+        }
+        // SY <--
+
+        updateTrackChapterRead(readerChapter)
+        deleteChapterIfNeeded(readerChapter)
+
+        val markDuplicateAsRead = libraryPreferences.markDuplicateReadChapterAsRead().get()
+            .contains(LibraryPreferences.MARK_DUPLICATE_CHAPTER_READ_EXISTING)
+        // KMK --> In scanlator-priority mode the hidden same-number duplicates from other scanlators
+        // must follow their winner's read state — otherwise the unread count stays inflated and the
+        // Continue button can resume into a duplicate of a chapter that's already been read.
+        if (!markDuplicateAsRead && manga?.scanlatorPriorityMode != true) return
+        // KMK <--
+
+        val duplicateUnreadChapters = unfilteredChapterList
+            .mapNotNull { chapter ->
+                if (
+                    !chapter.read &&
+                    chapter.isRecognizedNumber &&
+                    chapter.chapterNumber.toFloat() == readerChapter.chapter.chapter_number
+                ) {
+                    ChapterUpdate(id = chapter.id, read = true)
+                        // KMK -->
+                        .also { deleteDupChapterIfNeeded(ReaderChapter(chapter.copy(read = true))) }
+                    // KMK <--
+                } else {
+                    null
+                }
+            }
+        updateChapter.awaitAll(duplicateUnreadChapters)
+    }
+
+    fun restartReadTimer() {
+        chapterReadStartTime = Instant.now().toEpochMilli()
+    }
+
+    /**
+     * Saves the chapter last read history if incognito mode isn't on.
+     */
+    suspend fun updateHistory() {
+        getCurrentChapter()?.let { readerChapter ->
+            if (incognitoMode) return@let
+
+            val chapterId = readerChapter.chapter.id!!
+            val endTime = Date()
+            val sessionReadDuration = chapterReadStartTime?.let { endTime.time - it } ?: 0
+
+            upsertHistory.await(HistoryUpdate(chapterId, endTime, sessionReadDuration))
+            chapterReadStartTime = null
+        }
+    }
+
+    /**
+     * Called from the activity to load and set the next chapter as active.
+     */
+    suspend fun loadNextChapter() {
+        val nextChapter = state.value.viewerChapters?.nextChapter ?: return
+        loadAdjacent(nextChapter)
+    }
+
+    /**
+     * Called from the activity to load and set the previous chapter as active.
+     */
+    suspend fun loadPreviousChapter() {
+        val prevChapter = state.value.viewerChapters?.prevChapter ?: return
+        loadAdjacent(prevChapter)
+    }
+
+    /**
+     * Returns the currently active chapter.
+     */
+    private fun getCurrentChapter(): ReaderChapter? {
+        return state.value.currentChapter
+    }
+
+    fun getSource() = manga?.source?.let { sourceManager.getOrStub(it) } as? HttpSource
+
+    fun getChapterUrl(): String? {
+        val sChapter = getCurrentChapter()?.chapter ?: return null
+        val source = if (manga?.source == MERGED_SOURCE_ID) {
+            state.value.mergedManga?.get(sChapter.manga_id)?.source?.let { sourceId ->
+                sourceManager.getOrStub(sourceId) as? HttpSource
+            }
+        } else {
+            getSource()
+        } ?: return null
+
+        return try {
+            source.getChapterUrl(sChapter)
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e)
+            null
+        }
+    }
+
+    /**
+     * Bookmarks the currently active chapter.
+     */
+    fun toggleChapterBookmark() {
+        val chapter = getCurrentChapter()?.chapter ?: return
+        val bookmarked = !chapter.bookmark
+        chapter.bookmark = bookmarked
+
+        viewModelScope.launchNonCancellable {
+            updateChapter.await(
+                ChapterUpdate(
+                    id = chapter.id!!,
+                    bookmark = bookmarked,
+                ),
+            )
+        }
+
+        mutableState.update {
+            it.copy(
+                bookmarked = bookmarked,
+            )
+        }
+    }
+
+    // MIKO -->
+    /**
+     * Bookmarks (or un-bookmarks) a single [page], like Kotatsu's page bookmarks. The stored
+     * identity is (chapterId, pageIndex); the page image URL is kept for the list thumbnail.
+     *
+     * When the toggle is going to *add* a bookmark, this also takes a persistent viewport capture
+     * (C20 "Momentos") before touching the DB: PixelCopy needs the window and the viewer's layout
+     * reads need the main thread, so the capture runs first on Main, then the codec + DB write run
+     * together on IO under [NonCancellable] so a bookmark started by the user always finishes even
+     * if the reader is torn down mid-write (D3 of the C20 contract). Whether the toggle is adding is
+     * only knowable for the chapter currently on screen — [state]'s `bookmarkedPages` only tracks
+     * that one; for any other chapter (an adjacent chapter's page, reached from the bookmark list)
+     * this captures anyway rather than guessing wrong, since the remove path ignores the preview.
+     */
+    fun togglePageBookmark(page: ReaderPage, focusFraction: Float? = null) {
+        val mangaId = manga?.id ?: return
+        val chapterId = page.chapter.chapter.id ?: return
+        // MIKO --> How far into the page the reader is, so a long-strip bookmark reopens where it
+        // was taken instead of at the top of a very tall image. Only long-strip has a meaningful
+        // answer: in a paged mode a page is never partially scrolled, and the viewer returns null
+        // for a page that isn't laid out (e.g. bookmarking a page of an adjacent chapter).
+        val scrollFraction = (state.value.viewer as? WebtoonViewer)?.getScrollFraction(page)
+        // MIKO <--
+        // Whether this toggle is going to add (vs. remove) a bookmark, so the capture below only
+        // runs when its result will actually be used — see the KDoc above for the adjacent-chapter
+        // fallback.
+        val willAdd = if (chapterId == state.value.currentChapter?.chapter?.id) {
+            page.index !in state.value.bookmarkedPages
+        } else {
+            true
+        }
+        val viewer = state.value.viewer
+        val activity = when (viewer) {
+            is WebtoonViewer -> viewer.activity
+            is PagerViewer -> viewer.activity
+            else -> null
+        }
+        viewModelScope.launch {
+            val bitmap = if (willAdd && viewer != null && activity != null) {
+                capturePageVisible(activity, viewer, page, activity.visibleBarBounds)
+            } else {
+                null
+            }
+            withContext(Dispatchers.IO + NonCancellable) {
+                val preview = bitmap?.let {
+                    runCatching {
+                        PageBookmarkPreviewCodec.compressBounded(it, PageBookmarkPreviewCodec.CAPTURE_WEBP_QUALITY)
+                    }.getOrNull()
+                }
+                bitmap?.recycle()
+                val added = togglePageBookmark.await(
+                    mangaId = mangaId,
+                    chapterId = chapterId,
+                    pageIndex = page.index,
+                    imageUrl = page.imageUrl,
+                    scrollFraction = scrollFraction,
+                    focusFraction = focusFraction,
+                    previewWebp = preview,
+                )
+                eventChannel.send(Event.PageBookmarkToggled(added))
+            }
+        }
+    }
+
+    // MIKO -->
+    /**
+     * Scroll position inside the initial page, when the reader was opened from a page bookmark that
+     * recorded one. Read once by [WebtoonViewer] as it does its first positioning; kept out of
+     * [State] because it is a one-shot instruction, not UI state.
+     */
+    @Volatile
+    private var pendingScrollFraction: Float? = null
+
+    fun consumePendingScrollFraction(): Float? = pendingScrollFraction.also { pendingScrollFraction = null }
+    // MIKO <--
+
+    /** Same as [togglePageBookmark] for the page currently on screen (reader top bar button). */
+    fun toggleCurrentPageBookmark() {
+        val pageIndex = state.value.currentPage - 1
+        val page = state.value.currentChapter?.pages?.firstOrNull { it.index == pageIndex } ?: return
+        val focusFraction = (state.value.viewer as? WebtoonViewer)?.getViewportCentreFraction(page)
+        togglePageBookmark(page, focusFraction)
+    }
+
+    /** Opens the bookmark-kind picker for the chapter being read (top bar overflow). */
+    fun openChapterBookmarkTypeDialog() {
+        mutableState.update { it.copy(dialog = Dialog.ChapterBookmarkType) }
+    }
+
+    /** Opens the site comments of the chapter being read (top bar button). */
+    fun openChapterCommentsDialog() {
+        mutableState.update { it.copy(dialog = Dialog.ChapterComments) }
+    }
+
+    /**
+     * Refines the kind of the current chapter's bookmark. Picking a kind on a chapter that is not
+     * bookmarked bookmarks it, so the local copy and the state are updated accordingly.
+     */
+    fun setCurrentChapterBookmarkType(type: ChapterBookmarkType) {
+        val chapter = getCurrentChapter()?.chapter ?: return
+        val chapterId = chapter.id ?: return
+        chapter.bookmark = true
+        viewModelScope.launchNonCancellable {
+            setChapterBookmarkType.await(chapterId, type)
+        }
+        mutableState.update { it.copy(bookmarked = true) }
+    }
+    // MIKO <--
+
+    // SY -->
+    fun toggleBookmark(chapterId: Long, bookmarked: Boolean) {
+        val chapter = chapterList.find { it.chapter.id == chapterId }?.chapter ?: return
+        chapter.bookmark = bookmarked
+        viewModelScope.launchNonCancellable {
+            updateChapter.await(
+                ChapterUpdate(
+                    id = chapterId,
+                    bookmark = bookmarked,
+                ),
+            )
+        }
+    }
+    // SY <--
+
+    /**
+     * Returns the viewer position used by this manga or the default one.
+     */
+    fun getMangaReadingMode(resolveDefault: Boolean = true): Int {
+        val default = readerPreferences.defaultReadingMode().get()
+        val manga = manga ?: return default
+        val readingMode = ReadingMode.fromPreference(manga.readingMode.toInt())
+        // SY -->
+        return when {
+            resolveDefault && readingMode == ReadingMode.DEFAULT && readerPreferences.useAutoWebtoon().get() -> {
+                manga.defaultReaderType(manga.mangaType(sourceName = sourceManager.get(manga.source)?.name))
+                    ?: default
+            }
+            resolveDefault && readingMode == ReadingMode.DEFAULT -> default
+            else -> manga.readingMode.toInt()
+        }
+        // SY <--
+    }
+
+    /**
+     * Updates the viewer position for the open manga.
+     */
+    fun setMangaReadingMode(readingMode: ReadingMode) {
+        val manga = manga ?: return
+        runBlocking(Dispatchers.IO) {
+            setMangaViewerFlags.awaitSetReadingMode(manga.id, readingMode.flagValue.toLong())
+            val currChapters = state.value.viewerChapters
+            if (currChapters != null) {
+                // Save current page
+                val currChapter = currChapters.currChapter
+                currChapter.requestedPage = currChapter.chapter.last_page_read
+
+                mutableState.update {
+                    it.copy(
+                        manga = getManga.await(manga.id),
+                        viewerChapters = currChapters,
+                    )
+                }
+                eventChannel.send(Event.ReloadViewerChapters)
+            }
+        }
+    }
+
+    /**
+     * Returns the orientation type used by this manga or the default one.
+     */
+    fun getMangaOrientation(resolveDefault: Boolean = true): Int {
+        val default = readerPreferences.defaultOrientationType().get()
+        val orientation = ReaderOrientation.fromPreference(manga?.readerOrientation?.toInt())
+        return when {
+            resolveDefault && orientation == ReaderOrientation.DEFAULT -> default
+            else -> manga?.readerOrientation?.toInt() ?: default
+        }
+    }
+
+    /**
+     * Updates the orientation type for the open manga.
+     */
+    fun setMangaOrientationType(orientation: ReaderOrientation) {
+        val manga = manga ?: return
+        viewModelScope.launchIO {
+            setMangaViewerFlags.awaitSetOrientation(manga.id, orientation.flagValue.toLong())
+            val currChapters = state.value.viewerChapters
+            if (currChapters != null) {
+                // Save current page
+                val currChapter = currChapters.currChapter
+                currChapter.requestedPage = currChapter.chapter.last_page_read
+
+                mutableState.update {
+                    it.copy(
+                        manga = getManga.await(manga.id),
+                        viewerChapters = currChapters,
+                    )
+                }
+                eventChannel.send(Event.SetOrientation(getMangaOrientation()))
+                eventChannel.send(Event.ReloadViewerChapters)
+            }
+        }
+    }
+
+    // SY -->
+    // KMK --> Toggle image enhancement on/off via the enhancementMode preference.
+    // Remembers the last active mode (live/remote/download) so toggling back on restores it.
+    fun toggleImageEnhancement(): Boolean {
+        val current = readerPreferences.enhancementMode().get()
+        return if (current != EnhancementMode.NONE) {
+            readerPreferences.lastEnhancementMode().set(current)
+            readerPreferences.enhancementMode().set(EnhancementMode.NONE)
+            false
+        } else {
+            val restored = readerPreferences.lastEnhancementMode().get()
+                .takeIf { it != EnhancementMode.NONE }
+                ?: EnhancementMode.LOCAL
+            readerPreferences.enhancementMode().set(restored)
+            true
+        }
+    }
+    // KMK <--
+    fun toggleCropBorders(): Boolean {
+        val readingMode = getMangaReadingMode()
+        val isPagerType = ReadingMode.isPagerType(readingMode)
+        val isWebtoon = ReadingMode.WEBTOON.flagValue == readingMode
+        return if (isPagerType) {
+            readerPreferences.cropBorders().toggle()
+        } else if (isWebtoon) {
+            readerPreferences.cropBordersWebtoon().toggle()
+        } else {
+            readerPreferences.cropBordersContinuousVertical().toggle()
+        }
+    }
+    // SY <--
+
+    /**
+     * Generate a filename for the given [manga] and [page]
+     */
+    private fun generateFilename(
+        manga: Manga,
+        page: ReaderPage,
+    ): String {
+        val chapter = page.chapter.chapter
+        val filenameSuffix = " - ${page.number}"
+        return DiskUtil.buildValidFilename(
+            "${manga.title} - ${chapter.name}",
+            MAX_FILE_NAME_BYTES - filenameSuffix.byteSize(),
+        ) + filenameSuffix
+    }
+
+    fun showMenus(visible: Boolean) {
+        mutableState.update { it.copy(menuVisible = visible) }
+    }
+
+    // KMK -->
+    fun updateProcessingStatus(message: String?) {
+        mutableState.update { it.copy(processingStatus = message) }
+    }
+
+    /**
+     * Rebuilds the current viewer's page views. Used after enhancement caches are cleared
+     * (e.g. "Force re-upscale") so pages re-run their enhancement pipeline immediately.
+     * Uses [Event.ReloadPages] (full view recreation) rather than [Event.ReloadViewerChapters],
+     * which keeps already-built views and would not re-run the enhancement pipeline.
+     */
+    fun requestViewerReload() {
+        eventChannel.trySend(Event.ReloadPages)
+    }
+    // KMK <--
+
+    // SY -->
+    fun showEhUtils(visible: Boolean) {
+        mutableState.update { it.copy(ehUtilsVisible = visible) }
+    }
+
+    fun setIndexChapterToShift(index: Long?) {
+        mutableState.update { it.copy(indexChapterToShift = index) }
+    }
+
+    fun setIndexPageToShift(index: Int?) {
+        mutableState.update { it.copy(indexPageToShift = index) }
+    }
+
+    fun openChapterListDialog() {
+        mutableState.update { it.copy(dialog = Dialog.ChapterList) }
+    }
+
+    fun setDoublePages(doublePages: Boolean) {
+        mutableState.update { it.copy(doublePages = doublePages) }
+    }
+
+    fun openAutoScrollHelpDialog() {
+        mutableState.update { it.copy(dialog = Dialog.AutoScrollHelp) }
+    }
+
+    fun openBoostPageHelp() {
+        mutableState.update { it.copy(dialog = Dialog.BoostPageHelp) }
+    }
+
+    fun openRetryAllHelp() {
+        mutableState.update { it.copy(dialog = Dialog.RetryAllHelp) }
+    }
+
+    fun toggleAutoScroll(enabled: Boolean) {
+        mutableState.update { it.copy(autoScroll = enabled) }
+    }
+
+    fun setAutoScrollFrequency(frequency: String) {
+        mutableState.update { it.copy(ehAutoscrollFreq = frequency) }
+    }
+    // SY <--
+
+    fun showLoadingDialog() {
+        mutableState.update { it.copy(dialog = Dialog.Loading) }
+    }
+
+    fun openReadingModeSelectDialog() {
+        mutableState.update { it.copy(dialog = Dialog.ReadingModeSelect) }
+    }
+
+    fun openOrientationModeSelectDialog() {
+        mutableState.update { it.copy(dialog = Dialog.OrientationModeSelect) }
+    }
+
+    fun openPageDialog(
+        page: ReaderPage/* SY --> */,
+        extraPage: ReaderPage? = null/* SY <-- *//* MIKO --> */,
+        focusFraction: Float? = null/* MIKO <-- */,
+    ) {
+        mutableState.update { it.copy(dialog = Dialog.PageActions(page, extraPage, focusFraction)) }
+    }
+
+    fun openSettingsDialog() {
+        mutableState.update { it.copy(dialog = Dialog.Settings) }
+    }
+
+    fun closeDialog() {
+        mutableState.update { it.copy(dialog = null) }
+    }
+
+    fun setBrightnessOverlayValue(value: Int) {
+        mutableState.update { it.copy(brightnessOverlayValue = value) }
+    }
+
+    /**
+     * Saves the image of the selected page on the pictures directory and notifies the UI of the result.
+     * There's also a notification to allow sharing the image somewhere else or deleting it.
+     */
+    fun saveImage(useExtraPage: Boolean) {
+        // SY -->
+        val page = if (useExtraPage) {
+            (state.value.dialog as? Dialog.PageActions)?.extraPage
+        } else {
+            (state.value.dialog as? Dialog.PageActions)?.page
+        }
+        // SY <--
+        if (page?.status != Page.State.Ready) return
+        val manga = manga ?: return
+
+        val context = Injekt.get<Application>()
+        val notifier = SaveImageNotifier(context)
+        notifier.onClear()
+
+        val filename = generateFilename(manga, page)
+
+        // Pictures directory.
+        val relativePath = if (readerPreferences.folderPerManga().get()) {
+            DiskUtil.buildValidFilename(manga.title)
+        } else {
+            ""
+        }
+
+        // Copy file in background.
+        viewModelScope.launchNonCancellable {
+            try {
+                val uri = imageSaver.save(
+                    image = Image.Page(
+                        inputStream = page.stream!!,
+                        name = filename,
+                        location = Location.Pictures.create(relativePath),
+                    ),
+                )
+                withUIContext {
+                    notifier.onComplete(uri)
+                    eventChannel.send(Event.SavedImage(SaveImageResult.Success(uri)))
+                }
+            } catch (e: Throwable) {
+                notifier.onError(e.message)
+                eventChannel.send(Event.SavedImage(SaveImageResult.Error(e)))
+            }
+        }
+    }
+
+    // SY -->
+    fun saveImages() {
+        val (firstPage, secondPage) = (state.value.dialog as? Dialog.PageActions ?: return)
+        val viewer = state.value.viewer as? PagerViewer ?: return
+        val isLTR = (viewer !is R2LPagerViewer) xor (viewer.config.invertDoublePages)
+        val bg = viewer.config.pageCanvasColor
+
+        if (firstPage.status != Page.State.Ready) return
+        if (secondPage?.status != Page.State.Ready) return
+
+        val manga = manga ?: return
+
+        val context = Injekt.get<Application>()
+        val notifier = SaveImageNotifier(context)
+        notifier.onClear()
+
+        // Copy file in background.
+        viewModelScope.launchNonCancellable {
+            try {
+                val uri = saveImages(
+                    page1 = firstPage,
+                    page2 = secondPage,
+                    isLTR = isLTR,
+                    bg = bg,
+                    location = Location.Pictures.create(DiskUtil.buildValidFilename(manga.title)),
+                    manga = manga,
+                )
+                eventChannel.send(Event.SavedImage(SaveImageResult.Success(uri)))
+            } catch (e: Throwable) {
+                notifier.onError(e.message)
+                eventChannel.send(Event.SavedImage(SaveImageResult.Error(e)))
+            }
+        }
+    }
+
+    private fun saveImages(
+        page1: ReaderPage,
+        page2: ReaderPage,
+        isLTR: Boolean,
+        @ColorInt bg: Int,
+        location: Location,
+        manga: Manga,
+    ): Uri {
+        val stream1 = page1.stream!!
+        ImageUtil.findImageType(stream1) ?: throw Exception("Not an image")
+        val stream2 = page2.stream!!
+        ImageUtil.findImageType(stream2) ?: throw Exception("Not an image")
+        val imageBitmap = ImageDecoder.newInstance(stream1())?.decode()!!
+        val imageBitmap2 = ImageDecoder.newInstance(stream2())?.decode()!!
+
+        val chapter = page1.chapter.chapter
+
+        // Build destination file.
+        val filenameSuffix = " - ${page1.number}-${page2.number}.jpg"
+        val filename = DiskUtil.buildValidFilename(
+            "${manga.title} - ${chapter.name}",
+            MAX_FILE_NAME_BYTES - filenameSuffix.byteSize(),
+        ) + filenameSuffix
+
+        return imageSaver.save(
+            image = Image.Page(
+                inputStream = { ImageUtil.mergeBitmaps(imageBitmap, imageBitmap2, isLTR, 0, bg).inputStream() },
+                name = filename,
+                location = location,
+            ),
+        )
+    }
+    // SY <--
+
+    /**
+     * Shares the image of the selected page and notifies the UI with the path of the file to share.
+     * The image must be first copied to the internal partition because there are many possible
+     * formats it can come from, like a zipped chapter, in which case it's not possible to directly
+     * get a path to the file and it has to be decompressed somewhere first. Only the last shared
+     * image will be kept so it won't be taking lots of internal disk space.
+     */
+    fun shareImage(
+        copyToClipboard: Boolean,
+        // SY -->
+        useExtraPage: Boolean,
+        // SY <--
+    ) {
+        // SY -->
+        val page = if (useExtraPage) {
+            (state.value.dialog as? Dialog.PageActions)?.extraPage
+        } else {
+            (state.value.dialog as? Dialog.PageActions)?.page
+        }
+        // SY <--
+        if (page?.status != Page.State.Ready) return
+        val manga = manga ?: return
+
+        val context = Injekt.get<Application>()
+        val destDir = context.cacheImageDir
+
+        val filename = generateFilename(manga, page)
+
+        try {
+            viewModelScope.launchNonCancellable {
+                destDir.deleteRecursively()
+                val uri = imageSaver.save(
+                    image = Image.Page(
+                        inputStream = page.stream!!,
+                        name = filename,
+                        location = Location.Cache,
+                    ),
+                )
+                eventChannel.send(if (copyToClipboard) Event.CopyImage(uri) else Event.ShareImage(uri, page))
+            }
+        } catch (e: Throwable) {
+            logcat(LogPriority.ERROR, e)
+        }
+    }
+
+    // SY -->
+    fun shareImages(copyToClipboard: Boolean) {
+        val (firstPage, secondPage) = (state.value.dialog as? Dialog.PageActions ?: return)
+        val viewer = state.value.viewer as? PagerViewer ?: return
+        val isLTR = (viewer !is R2LPagerViewer) xor (viewer.config.invertDoublePages)
+        val bg = viewer.config.pageCanvasColor
+
+        if (firstPage.status != Page.State.Ready) return
+        if (secondPage?.status != Page.State.Ready) return
+        val manga = manga ?: return
+
+        val context = Injekt.get<Application>()
+        val destDir = context.cacheImageDir
+
+        try {
+            viewModelScope.launchNonCancellable {
+                destDir.deleteRecursively()
+                val uri = saveImages(
+                    page1 = firstPage,
+                    page2 = secondPage,
+                    isLTR = isLTR,
+                    bg = bg,
+                    location = Location.Cache,
+                    manga = manga,
+                )
+                eventChannel.send(if (copyToClipboard) Event.CopyImage(uri) else Event.ShareImage(uri, firstPage, secondPage))
+            }
+        } catch (e: Throwable) {
+            logcat(LogPriority.ERROR, e)
+        }
+    }
+    // SY <--
+
+    /**
+     * Sets the image of the selected page as cover and notifies the UI of the result.
+     */
+    fun setAsCover(useExtraPage: Boolean) {
+        // SY -->
+        val page = if (useExtraPage) {
+            (state.value.dialog as? Dialog.PageActions)?.extraPage
+        } else {
+            (state.value.dialog as? Dialog.PageActions)?.page
+        }
+        // SY <--
+        if (page?.status != Page.State.Ready) return
+        val manga = manga ?: return
+        val stream = page.stream ?: return
+
+        viewModelScope.launchNonCancellable {
+            val result = try {
+                manga.editCover(Injekt.get(), stream())
+                if (manga.isLocal() || manga.favorite) {
+                    SetAsCoverResult.Success
+                } else {
+                    SetAsCoverResult.AddToLibraryFirst
+                }
+            } catch (_: Exception) {
+                SetAsCoverResult.Error
+            }
+            eventChannel.send(Event.SetCoverResult(result))
+        }
+    }
+
+    enum class SetAsCoverResult {
+        Success,
+        AddToLibraryFirst,
+        Error,
+    }
+
+    sealed interface SaveImageResult {
+        class Success(val uri: Uri) : SaveImageResult
+        class Error(val error: Throwable) : SaveImageResult
+    }
+
+    /**
+     * Starts the service that updates the last chapter read in sync services. This operation
+     * will run in a background thread and errors are ignored.
+     */
+    private fun updateTrackChapterRead(readerChapter: ReaderChapter) {
+        if (incognitoMode) return
+        if (!trackPreferences.autoUpdateTrack().get()) return
+
+        val manga = manga ?: return
+        val context = Injekt.get<Application>()
+
+        viewModelScope.launchNonCancellable {
+            trackChapter.await(context, manga.id, readerChapter.chapter.chapter_number.toDouble())
+        }
+    }
+
+    /**
+     * Enqueues this [chapter] to be deleted when [deletePendingChapters] is called. The download
+     * manager handles persisting it across process deaths.
+     */
+    private fun enqueueDeleteReadChapters(chapter: ReaderChapter) {
+        if (!chapter.chapter.read) return
+        val mergedManga = state.value.mergedManga
+        // SY -->
+        val manga = if (mergedManga.isNullOrEmpty()) {
+            manga
+        } else {
+            mergedManga[chapter.chapter.manga_id]
+        } ?: return
+        // SY <--
+
+        viewModelScope.launchNonCancellable {
+            downloadManager.enqueueChaptersToDelete(listOf(chapter.chapter.toDomainChapter()!!), manga)
+        }
+    }
+
+    /**
+     * Deletes all the pending chapters. This operation will run in a background thread and errors
+     * are ignored.
+     */
+    private fun deletePendingChapters() {
+        viewModelScope.launchNonCancellable {
+            downloadManager.deletePendingChapters()
+            tempFileManager.deleteTempFiles()
+        }
+    }
+
+    @Immutable
+    data class State(
+        val manga: Manga? = null,
+        val viewerChapters: ViewerChapters? = null,
+        val bookmarked: Boolean = false,
+        val isLoadingAdjacentChapter: Boolean = false,
+        val currentPage: Int = -1,
+
+        /**
+         * Viewer used to display the pages (pager, webtoon, ...).
+         */
+        val viewer: Viewer? = null,
+        val dialog: Dialog? = null,
+        val menuVisible: Boolean = false,
+        @field:IntRange(from = -100, to = 100) val brightnessOverlayValue: Int = 0,
+
+        // SY -->
+        /** for display page number in double-page mode */
+        val currentPageText: String = "",
+        val meta: RaisedSearchMetadata? = null,
+        val mergedManga: Map<Long, Manga>? = null,
+        val ehUtilsVisible: Boolean = false,
+        val lastShiftDoubleState: Boolean? = null,
+        val indexPageToShift: Int? = null,
+        val indexChapterToShift: Long? = null,
+        val doublePages: Boolean = false,
+        val dateRelativeTime: Boolean = true,
+        val autoScroll: Boolean = false,
+        val isAutoScrollEnabled: Boolean = false,
+        val ehAutoscrollFreq: String = "",
+        // SY <--
+        // KMK -->
+        val processingStatus: String? = null,
+        val preloadStatus: PreloadStatus? = null,
+        /** Page-slider notch: fraction of the chapter already downloaded (null hides it). */
+        val downloadNotchFraction: Float? = null,
+        /** Page-slider notch: fraction of the chapter already upscaled (null hides it). */
+        val upscaleNotchFraction: Float? = null,
+        // KMK <--
+        // MIKO -->
+        /** 0-based indexes of the bookmarked pages of [currentChapter]. */
+        val bookmarkedPages: Set<Int> = emptySet(),
+        /** chapterId → kind, only for the bookmarks of this entry that are not generic favorites. */
+        val chapterBookmarkTypes: Map<Long, ChapterBookmarkType> = emptyMap(),
+        /**
+         * Whether this source ships an enabled enhancement able to serve chapter comments, which is
+         * what makes the top-bar comments button appear.
+         */
+        val commentsAvailable: Boolean = false,
+        // MIKO <--
+    ) {
+        val currentChapter: ReaderChapter?
+            get() = viewerChapters?.currChapter
+
+        val totalPages: Int
+            get() = currentChapter?.pages?.size ?: -1
+
+        // MIKO --> kind of the bookmark of the chapter being read (generic when it has no row)
+        val currentChapterBookmarkType: ChapterBookmarkType
+            get() = currentChapter?.chapter?.id
+                ?.let { chapterBookmarkTypes[it] }
+                ?: ChapterBookmarkType.GENERIC
+        // MIKO <--
+    }
+
+    // KMK --> Live counters for the "Show preloading status" overlay.
+    @Immutable
+    data class PreloadStatus(
+        /** Pages in the look-ahead window whose upscale is finished (cached/skipped/baked-in). */
+        val loaded: Int,
+        /** Pages currently queued or actively being upscaled. */
+        val loading: Int,
+        /**
+         * Pages ahead of the current one that the page loader has already downloaded — the live
+         * upscaling target. Grows with the page-preload setting as downloads advance.
+         */
+        val max: Int,
+    )
+    // KMK <--
+
+    sealed interface Dialog {
+        data object Loading : Dialog
+        data object Settings : Dialog
+        data object ReadingModeSelect : Dialog
+        data object OrientationModeSelect : Dialog
+
+        // SY -->
+        data object ChapterList : Dialog
+        // SY <--
+
+        data class PageActions(
+            val page: ReaderPage,
+            // SY -->
+            val extraPage: ReaderPage? = null,
+            // SY <--
+            // MIKO --> where on the page the long-press landed, or the viewport centre for the
+            // top-bar toggle; null when unknown (e.g. paged reading mode). See [PageBookmark].
+            val focusFraction: Float? = null,
+            // MIKO <--
+        ) : Dialog
+
+        // SY -->
+        data object AutoScrollHelp : Dialog
+        data object RetryAllHelp : Dialog
+        data object BoostPageHelp : Dialog
+        // SY <--
+
+        // MIKO --> kind picker for the chapter being read
+        data object ChapterBookmarkType : Dialog
+
+        /** Site comments of the chapter being read. */
+        data object ChapterComments : Dialog
+        // MIKO <--
+    }
+
+    sealed interface Event {
+        data object ReloadViewerChapters : Event
+
+        // KMK --> Force-recreate all page views (re-runs the enhancement pipeline).
+        data object ReloadPages : Event
+        // KMK <--
+        data object PageChanged : Event
+        data class SetOrientation(val orientation: Int) : Event
+        data class SetCoverResult(val result: SetAsCoverResult) : Event
+
+        data class SavedImage(val result: SaveImageResult) : Event
+        data class ShareImage(
+            val uri: Uri,
+            val page: ReaderPage,
+            // SY -->
+            val secondPage: ReaderPage? = null,
+            // SY <--
+        ) : Event
+        data class CopyImage(val uri: Uri) : Event
+
+        // MIKO --> [added] true when the page ended up bookmarked, false when it was removed
+        data class PageBookmarkToggled(val added: Boolean) : Event
+        // MIKO <--
+    }
+}

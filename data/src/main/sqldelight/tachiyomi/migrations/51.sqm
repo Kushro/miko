@@ -1,0 +1,10 @@
+-- MIKO --> Independent library settings per category ("Special" tab, C12).
+-- DDL kept byte-identical to category_library_settings.sq.
+CREATE TABLE category_library_settings(
+    category_id INTEGER NOT NULL PRIMARY KEY,
+    settings TEXT NOT NULL,
+    updated_at INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY(category_id) REFERENCES categories (_id)
+    ON DELETE CASCADE
+);
+-- MIKO <--

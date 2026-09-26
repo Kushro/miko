@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MIKO: C15 launcher shortcut icon for the "Favorites" shortcut (show_favorites). Clone of
+     sc_explore_48dp.xml with the Material "Bookmarks" outlined glyph. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/sc_favorites_48dp">
+<background android:drawable="@color/accent_blue"/>
+<foreground>
+    <vector
+        android:width="120dp"
+        android:height="120dp"
+        android:viewportWidth="56.0"
+        android:viewportHeight="56.0">
+        <group
+            android:translateX="16"
+            android:translateY="16">
+            <path
+                android:fillColor="#FFF"
+                android:pathData="M15,7v12.97l-4.21,-1.81 -0.79,-0.34 -0.79,0.34L5,19.97V7h10M19,1H8.99C7.89,1 7,1.9 7,3h10c1.1,0 2,0.9 2,2v13l2,1V3c0,-1.1 -0.9,-2 -2,-2zM15,5H5c-1.1,0 -2,0.9 -2,2v16l7,-3 7,3V7c0,-1.1 -0.9,-2 -2,-2z" />
+        </group>
+    </vector>
+</foreground>
+</adaptive-icon>

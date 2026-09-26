@@ -1,0 +1,16 @@
+-- MIKO --> Persistent viewport captures for page bookmarks ("Moments", C20).
+-- One row per bookmark (PK = FK): the WEBP capture of what the user saw when bookmarking —
+-- current zoom/pan, upscaled version and reading filters included, menus excluded. Absence of a
+-- row = pre-C20 bookmark or a capture that could not be taken; consumers fall back to the old
+-- best-effort chain (ChapterCache -> download -> source -> manga cover). `preview` is capped at
+-- 1.5 MB by the writer (PageBookmarkPreviewCodec) so a row always fits Android's 2 MB
+-- CursorWindow. `updated_at` bumps on every rewrite (recompression) and keys the Coil cache.
+-- DDL kept byte-identical to page_bookmark_previews.sq.
+CREATE TABLE page_bookmark_previews(
+    page_bookmark_id INTEGER NOT NULL PRIMARY KEY,
+    preview BLOB NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(page_bookmark_id) REFERENCES page_bookmarks (_id)
+    ON DELETE CASCADE
+);
+-- MIKO <--

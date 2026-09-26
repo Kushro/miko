@@ -1,0 +1,45 @@
+-- MIKO — persistent viewport captures for page bookmarks ("Moments", migration 54).
+--
+-- One row per bookmark (PK = FK to `page_bookmarks._id`, cascade on delete): the WEBP capture of
+-- what the user saw when bookmarking — current zoom/pan, upscaled version and reading filters
+-- included, menus excluded. Absence of a row = pre-C20 bookmark or a capture that could not be
+-- taken; consumers fall back to the old best-effort chain (ChapterCache -> download -> source ->
+-- manga cover). `preview` is capped at 1.5 MB by the writer (PageBookmarkPreviewCodec) so a row
+-- always fits Android's 2 MB CursorWindow. `updated_at` bumps on every rewrite (recompression)
+-- and keys the Coil cache. List queries must never select `preview`; blobs are fetched per id.
+CREATE TABLE page_bookmark_previews(
+    page_bookmark_id INTEGER NOT NULL PRIMARY KEY,
+    preview BLOB NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(page_bookmark_id) REFERENCES page_bookmarks (_id)
+    ON DELETE CASCADE
+);
+
+get:
+SELECT preview
+FROM page_bookmark_previews
+WHERE page_bookmark_id = :id;
+
+upsert:
+INSERT OR REPLACE INTO page_bookmark_previews(page_bookmark_id, preview, updated_at)
+VALUES (:id, :preview, :updatedAt);
+
+delete:
+DELETE FROM page_bookmark_previews
+WHERE page_bookmark_id = :id;
+
+getStats:
+SELECT COUNT(*) AS count, COALESCE(SUM(LENGTH(preview)), 0) AS totalBytes
+FROM page_bookmark_previews;
+
+getMetas:
+SELECT page_bookmark_id, LENGTH(preview) AS sizeBytes, updated_at
+FROM page_bookmark_previews
+ORDER BY sizeBytes DESC;
+
+getByMangaId:
+SELECT PV.page_bookmark_id, PV.preview
+FROM page_bookmark_previews PV
+JOIN page_bookmarks PB
+ON PV.page_bookmark_id = PB._id
+WHERE PB.manga_id = :mangaId;

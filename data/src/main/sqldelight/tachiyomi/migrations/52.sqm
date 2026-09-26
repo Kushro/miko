@@ -1,0 +1,10 @@
+-- MIKO --> Scroll position inside a bookmarked page (C13).
+-- Fraction (0..1) of the bookmarked page's height that sat above the top edge of the viewport
+-- when the bookmark was created. Stored as a fraction, not pixels: rotating recreates the reader
+-- and re-lays out the page at a different width, so a pixel offset means nothing across
+-- orientations or devices.
+-- NULL means "unknown": every bookmark made before this migration, and every bookmark made in a
+-- paged reading mode, where a page is never partially scrolled. Those keep opening at the top.
+-- DDL kept byte-identical to page_bookmarks.sq.
+ALTER TABLE page_bookmarks ADD COLUMN scroll_fraction REAL;
+-- MIKO <--

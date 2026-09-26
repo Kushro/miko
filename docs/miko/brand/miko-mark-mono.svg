@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 432 432" width="432" height="432">
+  <!-- Miko mark (mono): torii gate, white torii, transparent background (themed-icon / monochrome layer). Geometry source of truth: docs/miko/brand/torii_path.txt -->
+  <path fill="#FFFFFF" fill-rule="nonzero" d="M112,126 Q216,158 320,126 L320,158 Q216,190 112,158 Z M142,162 H174 L170,306 H132 Z M258,162 H290 L300,306 H262 Z M122,226 H310 V254 H122 Z M206,172 H226 V230 H206 Z"/>
+</svg>

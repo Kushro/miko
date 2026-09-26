@@ -1,0 +1,384 @@
+package eu.kanade.presentation.reader.appbars
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.surfaceColorAtElevation
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import eu.kanade.presentation.reader.components.ChapterNavigator
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
+import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.R2LPagerViewer
+import kotlinx.collections.immutable.ImmutableSet
+import tachiyomi.domain.chapter.model.ChapterBookmarkType
+import tachiyomi.presentation.core.components.material.padding
+import android.graphics.Rect as AndroidRect
+
+private val readerBarsSlideAnimationSpec = tween<IntOffset>(200)
+private val readerBarsFadeAnimationSpec = tween<Float>(150)
+
+// SY -->
+enum class NavBarType {
+    VerticalRight,
+    VerticalLeft,
+    Bottom,
+}
+// SY <--
+
+@Composable
+fun ReaderAppBars(
+    visible: Boolean,
+
+    mangaTitle: String?,
+    chapterTitle: String?,
+    navigateUp: () -> Unit,
+    onClickTopAppBar: () -> Unit,
+    bookmarked: Boolean,
+    onToggleBookmarked: () -> Unit,
+    onOpenInWebView: (() -> Unit)?,
+    onOpenInBrowser: (() -> Unit)?,
+    onShare: (() -> Unit)?,
+
+    viewer: Viewer?,
+    onNextChapter: () -> Unit,
+    enabledNext: Boolean,
+    onPreviousChapter: () -> Unit,
+    enabledPrevious: Boolean,
+    currentPage: Int,
+    totalPages: Int,
+    onPageIndexChange: (Int) -> Unit,
+    // KMK --> Page-slider notch markers; null hides the corresponding notch
+    downloadNotchFraction: Float? = null,
+    upscaleNotchFraction: Float? = null,
+    // KMK <--
+
+    readingMode: ReadingMode,
+    onClickReadingMode: () -> Unit,
+    orientation: ReaderOrientation,
+    onClickOrientation: () -> Unit,
+    cropEnabled: Boolean,
+    onClickCropBorder: () -> Unit,
+    // KMK -->
+    imageEnhancementEnabled: Boolean,
+    onClickImageEnhancement: () -> Unit,
+    // KMK <--
+    onClickSettings: () -> Unit,
+    // SY -->
+    isExhToolsVisible: Boolean,
+    onSetExhUtilsVisibility: (Boolean) -> Unit,
+    isAutoScroll: Boolean,
+    isAutoScrollEnabled: Boolean,
+    onToggleAutoscroll: (Boolean) -> Unit,
+    autoScrollFrequency: String,
+    onSetAutoScrollFrequency: (String) -> Unit,
+    onClickAutoScrollHelp: () -> Unit,
+    onClickRetryAll: () -> Unit,
+    onClickRetryAllHelp: () -> Unit,
+    onClickBoostPage: () -> Unit,
+    onClickBoostPageHelp: () -> Unit,
+    navBarType: NavBarType,
+    currentPageText: String,
+    enabledButtons: ImmutableSet<String>,
+    currentReadingMode: ReadingMode,
+    dualPageSplitEnabled: Boolean,
+    doublePages: Boolean,
+    onClickChapterList: () -> Unit,
+    onClickPageLayout: () -> Unit,
+    onClickShiftPage: () -> Unit,
+    // SY <--
+    // MIKO -->
+    pageBookmarked: Boolean = false,
+    onTogglePageBookmarked: (() -> Unit)? = null,
+    bookmarkType: ChapterBookmarkType = ChapterBookmarkType.GENERIC,
+    onChangeBookmarkType: (() -> Unit)? = null,
+    onOpenComments: (() -> Unit)? = null,
+    onBarBoundsChanged: (List<AndroidRect>) -> Unit = {},
+    // MIKO <--
+) {
+    val isRtl = viewer is R2LPagerViewer
+    val backgroundColor = MaterialTheme.colorScheme
+        .surfaceColorAtElevation(3.dp)
+        .copy(alpha = if (isSystemInDarkTheme()) 0.9f else 0.95f)
+
+    // MIKO --> Window-coordinate bounds of the bar containers currently laid out, reported up to
+    // ReaderActivity so a page-bookmark capture (C20) can trim menu chrome out of the viewport
+    // rect it copies (D2). Cleared as soon as the menu hides rather than left to whatever the
+    // hide animation's last frame reported, since a mid-slide rect isn't a real obstruction.
+    var topBarBounds by remember { mutableStateOf<AndroidRect?>(null) }
+    var verticalNavBounds by remember { mutableStateOf<AndroidRect?>(null) }
+    var bottomBarBounds by remember { mutableStateOf<AndroidRect?>(null) }
+
+    LaunchedEffect(visible) {
+        if (!visible) {
+            topBarBounds = null
+            verticalNavBounds = null
+            bottomBarBounds = null
+        }
+    }
+
+    LaunchedEffect(topBarBounds, verticalNavBounds, bottomBarBounds) {
+        onBarBoundsChanged(listOfNotNull(topBarBounds, verticalNavBounds, bottomBarBounds))
+    }
+    // MIKO <--
+
+    Column(modifier = Modifier.fillMaxHeight()) {
+        AnimatedVisibility(
+            visible = visible,
+            // MIKO -->
+            modifier = Modifier.onGloballyPositioned { coordinates ->
+                topBarBounds = coordinates.boundsInWindow().toAndroidRect()
+            },
+            // MIKO <--
+            enter = slideInVertically(initialOffsetY = { -it }, animationSpec = readerBarsSlideAnimationSpec) +
+                fadeIn(animationSpec = readerBarsFadeAnimationSpec),
+            exit = slideOutVertically(targetOffsetY = { -it }, animationSpec = readerBarsSlideAnimationSpec) +
+                fadeOut(animationSpec = readerBarsFadeAnimationSpec),
+        ) {
+            // SY -->
+            Column {
+                // SY <--
+                ReaderTopBar(
+                    modifier = Modifier
+                        .background(backgroundColor)
+                        .clickable(onClick = onClickTopAppBar),
+                    mangaTitle = mangaTitle,
+                    chapterTitle = chapterTitle,
+                    navigateUp = navigateUp,
+                    bookmarked = bookmarked,
+                    onToggleBookmarked = onToggleBookmarked,
+                    // SY -->
+                    onOpenInWebView = null, // onOpenInWebView,
+                    onOpenInBrowser = null, // onOpenInBrowser,
+                    onShare = null, // onShare,
+                    // SY <--
+                    // MIKO -->
+                    pageBookmarked = pageBookmarked,
+                    onTogglePageBookmarked = onTogglePageBookmarked,
+                    bookmarkType = bookmarkType,
+                    onChangeBookmarkType = onChangeBookmarkType,
+                    onOpenComments = onOpenComments,
+                    // MIKO <--
+                )
+                // SY -->
+                ExhUtils(
+                    isVisible = isExhToolsVisible,
+                    onSetExhUtilsVisibility = onSetExhUtilsVisibility,
+                    backgroundColor = backgroundColor,
+                    isAutoScroll = isAutoScroll,
+                    isAutoScrollEnabled = isAutoScrollEnabled,
+                    onToggleAutoscroll = onToggleAutoscroll,
+                    autoScrollFrequency = autoScrollFrequency,
+                    onSetAutoScrollFrequency = onSetAutoScrollFrequency,
+                    onClickAutoScrollHelp = onClickAutoScrollHelp,
+                    onClickRetryAll = onClickRetryAll,
+                    onClickRetryAllHelp = onClickRetryAllHelp,
+                    onClickBoostPage = onClickBoostPage,
+                    onClickBoostPageHelp = onClickBoostPageHelp,
+                )
+            }
+            // SY <--
+        }
+
+        // KMK -->
+        when (navBarType) {
+            NavBarType.VerticalLeft -> {
+                AnimatedVisibility(
+                    visible = visible,
+                    enter = slideInHorizontally(
+                        initialOffsetX = { -it },
+                        animationSpec = readerBarsSlideAnimationSpec,
+                    ) +
+                        fadeIn(animationSpec = readerBarsFadeAnimationSpec),
+                    exit = slideOutHorizontally(
+                        targetOffsetX = { -it },
+                        animationSpec = readerBarsSlideAnimationSpec,
+                    ) +
+                        fadeOut(animationSpec = readerBarsFadeAnimationSpec),
+                    modifier = Modifier
+                        .weight(1f)
+                        .align(Alignment.Start)
+                        // MIKO -->
+                        .onGloballyPositioned { coordinates ->
+                            verticalNavBounds = coordinates.boundsInWindow().toAndroidRect()
+                        },
+                    // MIKO <--
+                ) {
+                    ChapterNavigator(
+                        isRtl = isRtl,
+                        onNextChapter = onNextChapter,
+                        enabledNext = enabledNext,
+                        onPreviousChapter = onPreviousChapter,
+                        enabledPrevious = enabledPrevious,
+                        currentPage = currentPage,
+                        totalPages = totalPages,
+                        onPageIndexChange = onPageIndexChange,
+                        // SY -->
+                        isVerticalSlider = true,
+                        currentPageText = currentPageText,
+                        // SY <--
+                        // KMK -->
+                        downloadNotchFraction = downloadNotchFraction,
+                        upscaleNotchFraction = upscaleNotchFraction,
+                        // KMK <--
+                    )
+                }
+            }
+
+            NavBarType.VerticalRight -> {
+                AnimatedVisibility(
+                    visible = visible,
+                    enter = slideInHorizontally(
+                        initialOffsetX = { it },
+                        animationSpec = readerBarsSlideAnimationSpec,
+                    ) +
+                        fadeIn(animationSpec = readerBarsFadeAnimationSpec),
+                    exit = slideOutHorizontally(
+                        targetOffsetX = { it },
+                        animationSpec = readerBarsSlideAnimationSpec,
+                    ) +
+                        fadeOut(animationSpec = readerBarsFadeAnimationSpec),
+                    modifier = Modifier
+                        .weight(1f)
+                        .align(Alignment.End)
+                        // MIKO -->
+                        .onGloballyPositioned { coordinates ->
+                            verticalNavBounds = coordinates.boundsInWindow().toAndroidRect()
+                        },
+                    // MIKO <--
+                ) {
+                    ChapterNavigator(
+                        isRtl = isRtl,
+                        onNextChapter = onNextChapter,
+                        enabledNext = enabledNext,
+                        onPreviousChapter = onPreviousChapter,
+                        enabledPrevious = enabledPrevious,
+                        currentPage = currentPage,
+                        totalPages = totalPages,
+                        onPageIndexChange = onPageIndexChange,
+                        // SY -->
+                        isVerticalSlider = true,
+                        currentPageText = currentPageText,
+                        // SY <--
+                        // KMK -->
+                        downloadNotchFraction = downloadNotchFraction,
+                        upscaleNotchFraction = upscaleNotchFraction,
+                        // KMK <--
+                    )
+                }
+            }
+            // KMK <--
+            else -> Spacer(modifier = Modifier.weight(1f))
+        }
+
+        AnimatedVisibility(
+            visible = visible,
+            // MIKO -->
+            modifier = Modifier.onGloballyPositioned { coordinates ->
+                bottomBarBounds = coordinates.boundsInWindow().toAndroidRect()
+            },
+            // MIKO <--
+            enter = slideInVertically(initialOffsetY = { it }, animationSpec = readerBarsSlideAnimationSpec) +
+                fadeIn(animationSpec = readerBarsFadeAnimationSpec),
+            exit = slideOutVertically(targetOffsetY = { it }, animationSpec = readerBarsSlideAnimationSpec) +
+                fadeOut(animationSpec = readerBarsFadeAnimationSpec),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small)) {
+                // SY -->
+                if (navBarType == NavBarType.Bottom) {
+                    // SY <--
+                    ChapterNavigator(
+                        isRtl = isRtl,
+                        onNextChapter = onNextChapter,
+                        enabledNext = enabledNext,
+                        onPreviousChapter = onPreviousChapter,
+                        enabledPrevious = enabledPrevious,
+                        currentPage = currentPage,
+                        totalPages = totalPages,
+                        onPageIndexChange = onPageIndexChange,
+                        // SY -->
+                        isVerticalSlider = false,
+                        currentPageText = currentPageText,
+                        // SY <--
+                        // KMK -->
+                        downloadNotchFraction = downloadNotchFraction,
+                        upscaleNotchFraction = upscaleNotchFraction,
+                        // KMK <--
+                    )
+                }
+                ReaderBottomBar(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(backgroundColor)
+                        .padding(horizontal = MaterialTheme.padding.small)
+                        .windowInsetsPadding(WindowInsets.navigationBars),
+                    readingMode = readingMode,
+                    onClickReadingMode = onClickReadingMode,
+                    orientation = orientation,
+                    onClickOrientation = onClickOrientation,
+                    cropEnabled = cropEnabled,
+                    onClickCropBorder = onClickCropBorder,
+                    // KMK -->
+                    imageEnhancementEnabled = imageEnhancementEnabled,
+                    onClickImageEnhancement = onClickImageEnhancement,
+                    // KMK <--
+                    onClickSettings = onClickSettings,
+                    // SY -->
+                    enabledButtons = enabledButtons,
+                    currentReadingMode = currentReadingMode,
+                    dualPageSplitEnabled = dualPageSplitEnabled,
+                    doublePages = doublePages,
+                    onClickChapterList = onClickChapterList,
+                    onClickWebView = onOpenInWebView,
+                    onClickBrowser = onOpenInBrowser,
+                    onClickShare = onShare,
+                    onClickPageLayout = onClickPageLayout,
+                    onClickShiftPage = onClickShiftPage,
+                    // SY <--
+                )
+            }
+        }
+    }
+}
+
+// MIKO -->
+/**
+ * Converts a Compose [boundsInWindow] rect to the Android [AndroidRect] `PageCapture` reads —
+ * the only place in this file that has to bridge the two coordinate types.
+ */
+private fun androidx.compose.ui.geometry.Rect.toAndroidRect() = AndroidRect(
+    left.toInt(),
+    top.toInt(),
+    right.toInt(),
+    bottom.toInt(),
+)
+// MIKO <--

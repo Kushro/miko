@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+        <!-- MIKO -> --><color name="splash">#1A1110</color><!-- MIKO <- -->
+
+    <!-- Default Theme -->
+    <color name="divider_default">@color/md_white_1000_12</color>
+</resources>

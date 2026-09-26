@@ -1,0 +1,29 @@
+-- MIKO — independent library settings ("Special" tab) of one category.
+--
+-- A row exists only for categories that opted in; absence of a row = the category follows the
+-- global filter/sort/display/grouping settings. `settings` is the JSON form of
+-- tachiyomi.domain.category.model.CategoryLibrarySettings.
+CREATE TABLE category_library_settings(
+    category_id INTEGER NOT NULL PRIMARY KEY,
+    settings TEXT NOT NULL,
+    updated_at INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY(category_id) REFERENCES categories (_id)
+    ON DELETE CASCADE
+);
+
+getAll:
+SELECT category_id, settings
+FROM category_library_settings;
+
+get:
+SELECT settings
+FROM category_library_settings
+WHERE category_id = :categoryId;
+
+upsert:
+INSERT OR REPLACE INTO category_library_settings(category_id, settings, updated_at)
+VALUES (:categoryId, :settings, :updatedAt);
+
+delete:
+DELETE FROM category_library_settings
+WHERE category_id = :categoryId;

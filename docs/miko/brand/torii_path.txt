@@ -1,0 +1,13 @@
+Miko mark - torii gate.
+Single filled path, viewport 432x432, fill-rule nonzero (subpaths overlap on purpose).
+Bounding box x 112..320, y 126..306 -> 208 x 180, centred on (216, 216).
+Fits inside the adaptive-icon safe circle (~275px effective diameter of the 264-288px budget).
+
+Subpaths, in order:
+  1. kasagi  - curved top lintel (ends sweep upward), thickness 32
+  2. left pillar  - tapers outward towards the ground
+  3. right pillar - mirror of the left about x=216
+  4. nuki    - straight lower crossbeam
+  5. gakuzuka - short centre tie between kasagi and nuki
+
+M112,126 Q216,158 320,126 L320,158 Q216,190 112,158 Z M142,162 H174 L170,306 H132 Z M258,162 H290 L300,306 H262 Z M122,226 H310 V254 H122 Z M206,172 H226 V230 H206 Z
