@@ -47,7 +47,7 @@ jobs:
           echo "VERSION_TAG=$version_tag" >> $GITHUB_OUTPUT
 
       - name: Clone Repository (${{ steps.get_tag.outputs.VERSION_TAG }})
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -126,7 +126,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     steps:
       - name: Clone Repository (${{ needs.prepare-build.outputs.VERSION_TAG }} - ${{ needs.prepare-build.outputs.TAG_NAME }})
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
