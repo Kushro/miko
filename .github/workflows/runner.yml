@@ -10,8 +10,6 @@ on:
         value: ${{ jobs.select.outputs.provider }}
       linux:
         value: ${{ jobs.select.outputs.linux }}
-      linux-small:
-        value: ${{ jobs.select.outputs.linux-small }}
       windows:
         value: ${{ jobs.select.outputs.windows }}
 permissions:
@@ -23,7 +21,6 @@ jobs:
     outputs:
       provider: ${{ steps.pick.outputs.provider }}
       linux: ${{ steps.pick.outputs.linux }}
-      linux-small: ${{ steps.pick.outputs.linux-small }}
       windows: ${{ steps.pick.outputs.windows }}
     steps:
       - id: pick
@@ -44,14 +41,13 @@ jobs:
             esac
           fi
           if [[ $provider == avrea ]]; then
-            linux=avrea-ubuntu-24.04-4-vcpu small=avrea-ubuntu-24.04-2-vcpu windows=avrea-windows-2025-4-vcpu
+            linux=avrea-ubuntu-24.04-4-vcpu windows=avrea-windows-2025-4-vcpu
           else
-            linux=ubuntu-24.04 small=ubuntu-24.04 windows=windows-2025
+            linux=ubuntu-24.04 windows=windows-2025
           fi
           {
             echo "provider=$provider"
             echo "linux=$linux"
-            echo "linux-small=$small"
             echo "windows=$windows"
           } >> "$GITHUB_OUTPUT"
           echo "Runner provider: **$provider** (mode: $MODE)" >> "$GITHUB_STEP_SUMMARY"
