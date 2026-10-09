@@ -132,7 +132,6 @@ These still say *komikku* and that is intentional. Renaming them breaks builds, 
 | `i18n-kmk` module and `KMR` | Upstream string layer; renaming it would conflict with every Komikku merge. |
 | `com.github.komikku-app:*` in `gradle/libs.versions.toml` | Real JitPack Maven coordinates. |
 | `com.github.clquwu:kotatsu-parsers-redo:<hash>` (alias `kotatsuParsers` in `gradle/libs.versions.toml`) | Real JitPack coordinate pinned to a commit hash; the alias is camelCase so the accessor stays `libs.kotatsuParsers`. The `org.koitharu.kotatsu.parsers.*` package inside it is the upstream library's, not ours — never rename it or its ProGuard rules. |
-| `renovate.json` → `mihonapp/mihon` | Legitimate shared upstream config. |
 | `komikku://` / `mihon://` schemes in the manifest | Registered OAuth redirect URIs on AniList/MAL/Bangumi/Shikimori. `miko://` was **added**, not substituted. |
 | `.tachibk`, `tachiyomi.extension` feature string, `eu.kanade.*` packages | Ecosystem/back-compat contracts. |
 
