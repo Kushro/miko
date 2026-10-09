@@ -6,8 +6,8 @@
 version: 2
 updates:
   - package-ecosystem: "github-actions"
-    # MIKO --> upstream targeted "develop"; Miko's default branch is master
-    target-branch: "master"
+    # MIKO --> upstream targeted "develop"; Miko's default branch is main
+    target-branch: "main"
     # MIKO <--
     directory: "/" # Location of package manifests
     schedule:
