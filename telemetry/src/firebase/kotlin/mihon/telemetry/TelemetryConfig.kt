@@ -15,9 +15,12 @@ object TelemetryConfig {
         if (!context.isMikoProductionApp()) return
         // MIKO <--
 
+        // MIKO --> initializeApp returns null when the APK carries no Firebase config (no
+        // google-services.json at build time); getInstance() would then throw in App.onCreate.
+        FirebaseApp.initializeApp(context) ?: return
         analytics = FirebaseAnalytics.getInstance(context)
-        FirebaseApp.initializeApp(context)
         crashlytics = FirebaseCrashlytics.getInstance()
+        // MIKO <--
         // KMK -->
         if (isPreviewBuildType) {
             analytics?.setUserProperty("preview_version", commitCount)
