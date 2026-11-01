@@ -182,11 +182,11 @@ object DownloadEnhancer {
             val port = preferences.remoteUpscalerPort().get()
             if (host.isBlank()) return@withContext false
 
-            val originalBitmap = imageFile.openInputStream().use { inputStream ->
-                BitmapFactory.decodeStream(inputStream)
-            } ?: return@withContext false
+            // Upload the file as downloaded; the server decodes it, so there's no need to decode
+            // it here and re-encode it as a (larger) PNG first.
+            val originalBytes = imageFile.openInputStream().use { it.readBytes() }
 
-            val processed = RemoteUpscaler.process(originalBitmap, host, port)
+            val processed = RemoteUpscaler.process(originalBytes, host, port)
             if (processed != null) {
                 var result = ImageFilter.applyInkFilterIfEnabled(processed, Injekt.get())
 
@@ -211,11 +211,10 @@ object DownloadEnhancer {
                     result.compress(compressFormat, 95, outputStream)
                 }
 
-                if (originalBitmap != result) originalBitmap.recycle()
+                if (processed != result) processed.recycle()
                 result.recycle()
                 true
             } else {
-                originalBitmap.recycle()
                 false
             }
         } catch (e: Exception) {

@@ -15,8 +15,10 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.system.GLUtil
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -96,6 +98,10 @@ object ImageEnhancer {
 
     @Volatile
     private var lastResetTime = 0L
+
+    /** The remote batch request in flight, cancelled when its session goes away. */
+    @Volatile
+    private var activeBatchJob: Job? = null
 
     @Volatile
     private var isFirstRequestAfterReset = false
@@ -194,7 +200,12 @@ object ImageEnhancer {
                             // KMK <--
                             if (window > 1) queue.drainTo(batch, window - 1)
                         }
-                        processBatchRequests(batch)
+                        // Run as its own job so release()/reset() can cancel it: that closes the
+                        // connection and the server drops the pages it hasn't finished.
+                        val job = scope.launch { processBatchRequests(batch) }
+                        activeBatchJob = job
+                        job.join()
+                        activeBatchJob = null
                     } else {
                         processRequest(req)
                     }
@@ -321,6 +332,7 @@ object ImageEnhancer {
      */
     fun release(session: Int) {
         if (session != sessionCounter.get()) return
+        activeBatchJob?.cancel()
         queue.clear()
         pendingRequests.clear()
         initialTargetEnqueued = false
@@ -331,6 +343,7 @@ object ImageEnhancer {
 
     /** Clears all state for a new chapter and returns the new session token (see [release]). */
     fun reset(initialPageIndex: Int = 0): Int {
+        activeBatchJob?.cancel()
         queue.clear()
         pendingRequests.clear()
         targetPageIndex = initialPageIndex
@@ -530,22 +543,27 @@ object ImageEnhancer {
             val urlReqs = batch.filter { it.data is String }
             val byteReqs = batch.filter { it.data is Buffer }
 
+            // Results stream in as the server finishes each page, so a page is cached (and the
+            // holder waiting in awaitQueuedResult shows it) without waiting for the rest.
+            fun onResult(req: EnhanceRequest, image: ByteArray) {
+                // KMK -->
+                val bytes = saveBatchResult(req, configHash, image)
+                if (bytes > 0L) {
+                    batchSuccessCount++
+                    batchBytesOut += bytes
+                    val k = "${req.mangaId}_${req.chapterId}_${req.pageIndex}_${req.pageVariant}"
+                    completedBatchKeys.add(k)
+                    pageRecordMap[k]?.let { r -> setPageRecord(k, r.copy(status = PageUpscaleStatus.DONE, durationMs = System.currentTimeMillis() - batchStartMs)) }
+                }
+                // KMK <--
+            }
+
             if (urlReqs.isNotEmpty()) {
-                val results = RemoteUpscaler.processBatchUrl(urlReqs.map { it.data as String }, host, port, sourceHeaders)
                 val fallbackByteReqs = mutableListOf<Pair<EnhanceRequest, ByteArray>>()
-                urlReqs.forEachIndexed { i, req ->
-                    val bitmap = results.getOrNull(i)
-                    if (bitmap != null) {
-                        // KMK -->
-                        val bytes = saveBatchResult(req, configHash, bitmap)
-                        if (bytes > 0L) {
-                            batchSuccessCount++
-                            batchBytesOut += bytes
-                            val k = "${req.mangaId}_${req.chapterId}_${req.pageIndex}_${req.pageVariant}"
-                            completedBatchKeys.add(k)
-                            pageRecordMap[k]?.let { setPageRecord(k, it.copy(status = PageUpscaleStatus.DONE, durationMs = System.currentTimeMillis() - batchStartMs)) }
-                        }
-                        // KMK <--
+                RemoteUpscaler.streamBatchUrl(urlReqs.map { it.data as String }, host, port, sourceHeaders) { i, image ->
+                    val req = urlReqs[i]
+                    if (image != null) {
+                        onResult(req, image)
                     } else if (req.fallbackStream != null) {
                         try {
                             val bytes = req.fallbackStream.invoke().use { Buffer().readFrom(it).readByteArray() }
@@ -557,44 +575,24 @@ object ImageEnhancer {
                 }
                 if (fallbackByteReqs.isNotEmpty()) {
                     logcat(LogPriority.WARN) { "ImageEnhancer: ${fallbackByteReqs.size} URL item(s) failed server-side download, retrying with bytes" }
-                    val fallbackResults = RemoteUpscaler.processBatch(fallbackByteReqs.map { it.second }, host, port)
-                    fallbackByteReqs.forEachIndexed { i, (req, _) ->
-                        // KMK -->
-                        fallbackResults.getOrNull(i)?.let {
-                            val bytes = saveBatchResult(req, configHash, it)
-                            if (bytes > 0L) {
-                                batchSuccessCount++
-                                batchBytesOut += bytes
-                                val k = "${req.mangaId}_${req.chapterId}_${req.pageIndex}_${req.pageVariant}"
-                                completedBatchKeys.add(k)
-                                pageRecordMap[k]?.let { r -> setPageRecord(k, r.copy(status = PageUpscaleStatus.DONE, durationMs = System.currentTimeMillis() - batchStartMs)) }
-                            }
-                        }
-                        // KMK <--
+                    RemoteUpscaler.streamBatch(fallbackByteReqs.map { it.second }, host, port) { i, image ->
+                        if (image != null) onResult(fallbackByteReqs[i].first, image)
                     }
                 }
             }
             if (byteReqs.isNotEmpty()) {
                 val images = byteReqs.map { (it.data as Buffer).readByteArray() }
-                val results = RemoteUpscaler.processBatch(images, host, port)
-                byteReqs.forEachIndexed { i, req ->
-                    // KMK -->
-                    results.getOrNull(i)?.let {
-                        val bytes = saveBatchResult(req, configHash, it)
-                        if (bytes > 0L) {
-                            batchSuccessCount++
-                            batchBytesOut += bytes
-                            val k = "${req.mangaId}_${req.chapterId}_${req.pageIndex}_${req.pageVariant}"
-                            completedBatchKeys.add(k)
-                            pageRecordMap[k]?.let { r -> setPageRecord(k, r.copy(status = PageUpscaleStatus.DONE, durationMs = System.currentTimeMillis() - batchStartMs)) }
-                        }
-                    }
-                    // KMK <--
+                RemoteUpscaler.streamBatch(images, host, port) { i, image ->
+                    if (image != null) onResult(byteReqs[i], image)
                 }
             }
             // KMK -->
             UpscaleStats.recordBatch(UpscaleStats.MODE_REMOTE, batchSuccessCount, System.currentTimeMillis() - batchStart, batchBytesOut)
             // KMK <--
+        } catch (e: CancellationException) {
+            // Released/reset mid-batch: the reader no longer needs these pages, so it isn't a failure.
+            logcat(LogPriority.DEBUG) { "ImageEnhancer: Batch of ${batch.size} page(s) cancelled" }
+            throw e
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e) { "ImageEnhancer: Batch processing failed" }
             sessionFailed.addAndGet(batch.size)

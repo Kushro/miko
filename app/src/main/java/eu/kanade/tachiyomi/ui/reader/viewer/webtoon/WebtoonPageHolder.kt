@@ -2,7 +2,6 @@ package eu.kanade.tachiyomi.ui.reader.viewer.webtoon
 
 import android.content.res.Resources
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.os.Build
 import android.view.LayoutInflater
 import android.view.ViewGroup
@@ -307,7 +306,7 @@ class WebtoonPageHolder(
                             }
                             // KMK <--
                             // Try the server-side download first for URL strategies; fall back to
-                            // sending the decoded bitmap when no usable URL or the server can't fetch it.
+                            // uploading the page's original bytes when no usable URL or the server can't fetch it.
                             val sourceHeaders = viewer.activity.viewModel.getSourceHeaders()
                             // KMK -->
                             val enhanceStart = System.currentTimeMillis()
@@ -316,11 +315,7 @@ class WebtoonPageHolder(
                                 RemoteUpscaler.processUrl(remoteUrl, remoteHost, remotePort, sourceHeaders, statusCb)
                             } else {
                                 null
-                            } ?: run {
-                                val input = BitmapFactory.decodeByteArray(sourceBytes, 0, sourceBytes.size)
-                                    ?: return@launch
-                                RemoteUpscaler.process(input, remoteHost, remotePort, statusCb)
-                            }
+                            } ?: RemoteUpscaler.process(sourceBytes, remoteHost, remotePort, statusCb)
                             if (enhanced != null) {
                                 // Tall upscaled pages can exceed the WebP/GL texture limits —
                                 // clamp before encoding or compress() fails silently.
