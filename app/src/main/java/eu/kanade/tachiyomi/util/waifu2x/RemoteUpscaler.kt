@@ -6,14 +6,22 @@ import android.util.Base64
 import android.util.JsonReader
 import android.util.JsonToken
 import android.util.Log
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.Call
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import okio.Buffer
 import okio.BufferedSink
 import okio.BufferedSource
@@ -30,6 +38,9 @@ import java.util.concurrent.TimeUnit
  * When the remote upscaler is enabled in settings, this replaces the local NCNN
  * pipeline. The server decides which model to use — no local model configuration
  * is needed on the device.
+ *
+ * Batches ask for NDJSON so each page can be saved/shown the moment the server finishes it
+ * (see [streamBatch]); servers without streaming answer with one JSON document instead.
  *
  * Memory note: batch payloads/responses are tens of MB of base64 (the JSON for a
  * 4-page batch of upscaled PNGs was 39 MB in the field). Everything here streams —
@@ -57,9 +68,16 @@ object RemoteUpscaler {
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     private val pngMediaType = "image/png".toMediaType()
+    private val octetStreamMediaType = "application/octet-stream".toMediaType()
+
+    /** Media type of streamed batch responses, sent as `Accept` to opt into them. */
+    private const val NDJSON = "application/x-ndjson"
 
     /**
      * Send a bitmap to the remote upscaler server and receive the upscaled bitmap.
+     *
+     * Re-encodes [input] as PNG on the device first, which is slow and usually larger than the
+     * source file — prefer the [ByteArray] overload whenever the original encoded bytes exist.
      *
      * @param input Original decoded bitmap (ARGB_8888)
      * @param host Server IP address (e.g. "192.168.1.42")
@@ -81,16 +99,14 @@ object RemoteUpscaler {
         try {
             onStatus("Connecting to $host:$port…")
 
-            // 1. Encode bitmap to PNG bytes. An okio Buffer grows in 8 KB segments instead of
-            //    doubling a byte[] like ByteArrayOutputStream (which peaks at ~3× the PNG size).
+            // Encode bitmap to PNG bytes. An okio Buffer grows in 8 KB segments instead of
+            // doubling a byte[] like ByteArrayOutputStream (which peaks at ~3× the PNG size).
             val encoded = Buffer()
             input.compress(Bitmap.CompressFormat.PNG, 100, encoded.outputStream())
             val encodedSize = encoded.size
 
-            onStatus("Uploading image (${encodedSize / 1024} KB)…")
-
-            // 2. POST to remote server. Buffer.copy() shares segments, so retries re-send the
-            //    same bytes without a byte[] copy of the PNG.
+            // Buffer.copy() shares segments, so retries re-send the same bytes without a
+            // byte[] copy of the PNG.
             val body = object : RequestBody() {
                 override fun contentType(): MediaType = pngMediaType
                 override fun contentLength(): Long = encodedSize
@@ -98,23 +114,66 @@ object RemoteUpscaler {
                     sink.writeAll(encoded.copy())
                 }
             }
+            upload(body, encodedSize, host, port, onStatus)
+        } catch (e: Exception) {
+            Log.e(TAG, "Remote upscaler failed: ${e.message}", e)
+            onStatus("Remote enhancement failed")
+            null
+        }
+    }
+
+    /**
+     * Send an image's original encoded bytes (JPEG/PNG/WebP/…) to the remote upscaler server and
+     * receive the upscaled bitmap. The server decodes by content, so nothing is re-encoded on the
+     * device and the upload is the size of the source file.
+     *
+     * @param input Encoded image bytes, exactly as read from the source or downloaded file
+     * @return Upscaled bitmap, or null on any failure
+     */
+    suspend fun process(
+        input: ByteArray,
+        host: String,
+        port: Int,
+        onStatus: suspend (String) -> Unit = {},
+    ): Bitmap? = withContext(Dispatchers.IO) {
+        if (host.isBlank()) {
+            Log.w(TAG, "Remote upscaler host is blank — skipping")
+            return@withContext null
+        }
+        if (input.isEmpty()) return@withContext null
+
+        onStatus("Connecting to $host:$port…")
+        upload(input.toRequestBody(octetStreamMediaType), input.size.toLong(), host, port, onStatus)
+    }
+
+    /** `POST /upscale` with [body] and decode the answer; shared by both [process] overloads. */
+    private suspend fun upload(
+        body: RequestBody,
+        size: Long,
+        host: String,
+        port: Int,
+        onStatus: suspend (String) -> Unit,
+    ): Bitmap? {
+        try {
+            onStatus("Uploading image (${size / 1024} KB)…")
+
             val request = Request.Builder()
                 .url("http://$host:$port/upscale")
                 .post(body)
                 .build()
 
-            client.newCall(request).execute().use { response ->
+            return client.newCall(request).execute().use { response ->
                 onStatus("Processing on server…")
 
                 if (!response.isSuccessful) {
                     Log.e(TAG, "Remote upscaler returned HTTP ${response.code}")
                     onStatus("Server error: HTTP ${response.code}")
-                    return@withContext null
+                    return null
                 }
 
                 onStatus("Downloading result…")
 
-                // 3. Decode response as bitmap straight from the socket — no byte[] copy of the PNG
+                // Decode response as bitmap straight from the socket — no byte[] copy of the image
                 val result = decodeBitmap(response.body.source())
                 if (result != null) onStatus("Enhancement complete")
                 result
@@ -122,15 +181,15 @@ object RemoteUpscaler {
         } catch (e: ConnectException) {
             Log.e(TAG, "Cannot connect to remote upscaler at $host:$port — is the server running?")
             onStatus("Connection failed — is the server running?")
-            null
+            return null
         } catch (e: SocketTimeoutException) {
             Log.e(TAG, "Remote upscaler timed out for $host:$port")
             onStatus("Server timed out")
-            null
+            return null
         } catch (e: Exception) {
             Log.e(TAG, "Remote upscaler failed: ${e.message}", e)
             onStatus("Remote enhancement failed")
-            null
+            return null
         }
     }
 
@@ -195,6 +254,7 @@ object RemoteUpscaler {
      *
      * Corresponds to `POST /upscale/batch` (JSON `{images:[base64…]}`). The returned list
      * is aligned to the input order; entries the server failed to upscale are null.
+     * Collects every result in memory — use [streamBatch] to handle each one as it lands.
      *
      * @param images Raw encoded image bytes (PNG/JPEG) — sent base64-encoded
      */
@@ -203,30 +263,10 @@ object RemoteUpscaler {
         host: String,
         port: Int,
         onStatus: suspend (String) -> Unit = {},
-    ): List<ByteArray?> = withContext(Dispatchers.IO) {
-        if (host.isBlank() || images.isEmpty()) return@withContext emptyList()
-
-        try {
-            onStatus("Uploading batch of ${images.size} image(s)…")
-            val request = Request.Builder()
-                .url("http://$host:$port/upscale/batch")
-                .post(BatchImagesBody(images))
-                .build()
-
-            batchClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Log.e(TAG, "Remote /upscale/batch returned HTTP ${response.code}")
-                    onStatus("Server error: HTTP ${response.code}")
-                    return@withContext List(images.size) { null }
-                }
-                onStatus("Received batch result…")
-                parseBatchResponse(response.body.source(), images.size)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Remote /upscale/batch failed: ${e.message}", e)
-            onStatus("Remote batch enhancement failed")
-            List(images.size) { null }
-        }
+    ): List<ByteArray?> {
+        val out = arrayOfNulls<ByteArray>(images.size)
+        streamBatch(images, host, port, onStatus) { index, image -> out[index] = image }
+        return out.toList()
     }
 
     /**
@@ -234,6 +274,7 @@ object RemoteUpscaler {
      *
      * Corresponds to `POST /upscale/batch/url` (JSON `{urls:[…]}`). The server downloads
      * in parallel. The returned list is aligned to the input order; failures are null.
+     * Collects every result in memory — use [streamBatchUrl] to handle each one as it lands.
      */
     suspend fun processBatchUrl(
         urls: List<String>,
@@ -241,34 +282,202 @@ object RemoteUpscaler {
         port: Int,
         sourceHeaders: Map<String, String> = emptyMap(),
         onStatus: suspend (String) -> Unit = {},
-    ): List<ByteArray?> = withContext(Dispatchers.IO) {
-        if (host.isBlank() || urls.isEmpty()) return@withContext emptyList()
+    ): List<ByteArray?> {
+        val out = arrayOfNulls<ByteArray>(urls.size)
+        streamBatchUrl(urls, host, port, sourceHeaders, onStatus) { index, image -> out[index] = image }
+        return out.toList()
+    }
 
+    /**
+     * Streaming form of [processBatch]: [onResult] runs for each image as soon as the server
+     * finishes it, in completion order, with the request index and the server's output bytes
+     * (null when that item failed).
+     *
+     * [onResult] is called exactly once per index — indices the server never answered (HTTP
+     * error, dropped connection, unparseable body) are reported as null at the end — unless
+     * the calling coroutine is cancelled. Cancelling closes the connection, which makes the
+     * server drop the images it hasn't finished.
+     */
+    suspend fun streamBatch(
+        images: List<ByteArray>,
+        host: String,
+        port: Int,
+        onStatus: suspend (String) -> Unit = {},
+        onResult: suspend (index: Int, image: ByteArray?) -> Unit,
+    ) {
+        if (host.isBlank() || images.isEmpty()) {
+            images.indices.forEach { onResult(it, null) }
+            return
+        }
+        onStatus("Uploading batch of ${images.size} image(s)…")
+        runBatch("/upscale/batch", BatchImagesBody(images), images.size, host, port, onStatus, onResult)
+    }
+
+    /** Streaming form of [processBatchUrl]; same [onResult] contract as [streamBatch]. */
+    suspend fun streamBatchUrl(
+        urls: List<String>,
+        host: String,
+        port: Int,
+        sourceHeaders: Map<String, String> = emptyMap(),
+        onStatus: suspend (String) -> Unit = {},
+        onResult: suspend (index: Int, image: ByteArray?) -> Unit,
+    ) {
+        if (host.isBlank() || urls.isEmpty()) {
+            urls.indices.forEach { onResult(it, null) }
+            return
+        }
+        onStatus("Requesting server-side download of ${urls.size} image(s)…")
+        val arr = JSONArray()
+        urls.forEach { arr.put(it) }
+        val payload = JSONObject().put("urls", arr).also { obj ->
+            if (sourceHeaders.isNotEmpty()) obj.put("headers", JSONObject(sourceHeaders))
+        }.toString()
+        runBatch("/upscale/batch/url", payload.toRequestBody(jsonMediaType), urls.size, host, port, onStatus, onResult)
+    }
+
+    /**
+     * POST a batch asking for NDJSON (`Accept: application/x-ndjson`) and feed each result to
+     * [onResult] as it is parsed. Servers that predate streaming ignore the header and answer
+     * with the single `{"batch_id":…,"results":[…]}` document, which [readBatchResults] reads
+     * just the same — only all at once.
+     */
+    private suspend fun runBatch(
+        route: String,
+        body: RequestBody,
+        count: Int,
+        host: String,
+        port: Int,
+        onStatus: suspend (String) -> Unit,
+        onResult: suspend (index: Int, image: ByteArray?) -> Unit,
+    ) = withContext(Dispatchers.IO) {
+        val delivered = BooleanArray(count)
+        val deliver: suspend (Int, ByteArray?) -> Unit = { index, image ->
+            if (index in 0 until count && !delivered[index]) {
+                delivered[index] = true
+                onResult(index, image)
+            }
+        }
         try {
-            onStatus("Requesting server-side download of ${urls.size} image(s)…")
-            val arr = JSONArray()
-            urls.forEach { arr.put(it) }
-            val payload = JSONObject().put("urls", arr).also { obj ->
-                if (sourceHeaders.isNotEmpty()) obj.put("headers", JSONObject(sourceHeaders))
-            }.toString()
             val request = Request.Builder()
-                .url("http://$host:$port/upscale/batch/url")
-                .post(payload.toRequestBody(jsonMediaType))
+                .url("http://$host:$port$route")
+                .header("Accept", NDJSON)
+                .post(body)
                 .build()
 
-            batchClient.newCall(request).execute().use { response ->
+            batchClient.newCall(request).executeCancellable { response ->
                 if (!response.isSuccessful) {
-                    Log.e(TAG, "Remote /upscale/batch/url returned HTTP ${response.code}")
+                    Log.e(TAG, "Remote $route returned HTTP ${response.code}")
                     onStatus("Server error: HTTP ${response.code}")
-                    return@withContext List(urls.size) { null }
+                    return@executeCancellable
                 }
-                onStatus("Received batch result…")
-                parseBatchResponse(response.body.source(), urls.size)
+                val streamed = response.header("Content-Type")?.startsWith(NDJSON) == true
+                onStatus(if (streamed) "Receiving batch results…" else "Received batch result…")
+                readBatchResults(response.body.source(), deliver)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            Log.e(TAG, "Remote /upscale/batch/url failed: ${e.message}", e)
+            // Cancelling the call surfaces here as an IOException; that's not a server failure.
+            ensureActive()
+            Log.e(TAG, "Remote $route failed: ${e.message}", e)
             onStatus("Remote batch enhancement failed")
-            List(urls.size) { null }
+        }
+        for (index in 0 until count) {
+            if (!delivered[index]) onResult(index, null)
+        }
+    }
+
+    /**
+     * Run a blocking OkHttp call so that cancelling the coroutine cancels the call. OkHttp's
+     * `execute()` ignores coroutine cancellation on its own; cancelling the call closes the
+     * socket mid-read, which is also how the server learns to stop work nobody will read.
+     */
+    private suspend fun Call.executeCancellable(block: suspend (Response) -> Unit) = coroutineScope {
+        val call = this@executeCancellable
+        val watcher = launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                awaitCancellation()
+            } finally {
+                call.cancel()
+            }
+        }
+        try {
+            call.execute().use { block(it) }
+        } finally {
+            watcher.cancel()
+        }
+    }
+
+    /**
+     * Parse a batch response body and hand each item to [deliver] as soon as it is read.
+     * Bytes are the server's output PNG/WebP — written directly to cache without re-encoding.
+     *
+     * Accepts both shapes the server answers with:
+     * - NDJSON: `{"batch_id":N,"count":n}` then one `{"index":i,"success":…}` object per line;
+     * - legacy: `{"batch_id":N,"results":[{"index":i,"success":bool,"image":"b64"|null,"error":"…"}]}`.
+     *
+     * Pull-parsed (lenient, so consecutive NDJSON lines read as consecutive top-level values)
+     * so only one item's base64 string is ever in memory at a time.
+     */
+    private suspend fun readBatchResults(source: BufferedSource, deliver: suspend (Int, ByteArray?) -> Unit) {
+        JsonReader(InputStreamReader(source.inputStream(), Charsets.UTF_8)).use { reader ->
+            reader.isLenient = true
+            while (reader.peek() != JsonToken.END_DOCUMENT) {
+                readBatchObject(reader, null, deliver)
+            }
+        }
+    }
+
+    /**
+     * Reads one object, which is either a result item (`{index,success,image,error}`, field
+     * order not assumed) or an envelope (the NDJSON header line, or the legacy document whose
+     * `results` items are read recursively). [position] is the item's place in a legacy
+     * `results` array, used when an item carries no `index`.
+     */
+    private suspend fun readBatchObject(
+        reader: JsonReader,
+        position: Int?,
+        deliver: suspend (Int, ByteArray?) -> Unit,
+    ) {
+        var index = position
+        var success = false
+        var image: ByteArray? = null
+        var error: String? = null
+
+        reader.beginObject()
+        while (reader.hasNext()) {
+            when (reader.nextName()) {
+                "results" -> if (reader.peek() == JsonToken.BEGIN_ARRAY) {
+                    reader.beginArray()
+                    var itemPosition = 0
+                    while (reader.hasNext()) {
+                        readBatchObject(reader, itemPosition++, deliver)
+                    }
+                    reader.endArray()
+                } else {
+                    reader.skipValue()
+                }
+                "index" -> if (reader.peek() == JsonToken.NULL) reader.nextNull() else index = reader.nextInt()
+                "success" -> if (reader.peek() == JsonToken.NULL) reader.nextNull() else success = reader.nextBoolean()
+                "image" -> if (reader.peek() == JsonToken.NULL) {
+                    reader.nextNull()
+                } else {
+                    val b64 = reader.nextString()
+                    if (b64.isNotEmpty()) image = Base64.decode(b64, Base64.DEFAULT)
+                }
+                "error" -> if (reader.peek() == JsonToken.NULL) reader.nextNull() else error = reader.nextString()
+                else -> reader.skipValue()
+            }
+        }
+        reader.endObject()
+
+        // Envelopes (no index, not inside `results`) carry nothing to deliver.
+        if (index == null) return
+        if (success && image != null) {
+            deliver(index, image)
+        } else {
+            Log.w(TAG, "Batch item $index failed: ${error.orEmpty()}")
+            deliver(index, null)
         }
     }
 
@@ -326,70 +535,6 @@ object RemoteUpscaler {
 
             /** Multiple of 3 so every chunk but the last encodes without padding. */
             const val ENCODE_CHUNK = 3 * 16 * 1024
-        }
-    }
-
-    /**
-     * Parse a batch response body into raw byte arrays aligned to the request order.
-     * Bytes are the server's output PNG — written directly to cache without re-encoding.
-     * Shape: {"batch_id":N,"results":[{"index":i,"success":bool,"image":"b64"|null,"error":"…"}]}.
-     *
-     * Pull-parsed so only one item's base64 string is ever in memory at a time.
-     */
-    private fun parseBatchResponse(source: BufferedSource, expectedSize: Int): List<ByteArray?> {
-        val out = arrayOfNulls<ByteArray>(expectedSize)
-        try {
-            JsonReader(InputStreamReader(source.inputStream(), Charsets.UTF_8)).use { reader ->
-                reader.beginObject()
-                while (reader.hasNext()) {
-                    if (reader.nextName() == "results" && reader.peek() == JsonToken.BEGIN_ARRAY) {
-                        reader.beginArray()
-                        var position = 0
-                        while (reader.hasNext()) {
-                            readBatchItem(reader, position++, expectedSize, out)
-                        }
-                        reader.endArray()
-                    } else {
-                        reader.skipValue()
-                    }
-                }
-                reader.endObject()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse batch response: ${e.message}", e)
-        }
-        return out.toList()
-    }
-
-    /** Reads one `{index,success,image,error}` object; the field order is not assumed. */
-    private fun readBatchItem(reader: JsonReader, position: Int, expectedSize: Int, out: Array<ByteArray?>) {
-        var index = position
-        var success = false
-        var image: ByteArray? = null
-        var error: String? = null
-
-        reader.beginObject()
-        while (reader.hasNext()) {
-            when (reader.nextName()) {
-                "index" -> if (reader.peek() == JsonToken.NULL) reader.nextNull() else index = reader.nextInt()
-                "success" -> if (reader.peek() == JsonToken.NULL) reader.nextNull() else success = reader.nextBoolean()
-                "image" -> if (reader.peek() == JsonToken.NULL) {
-                    reader.nextNull()
-                } else {
-                    val b64 = reader.nextString()
-                    if (b64.isNotEmpty()) image = Base64.decode(b64, Base64.DEFAULT)
-                }
-                "error" -> if (reader.peek() == JsonToken.NULL) reader.nextNull() else error = reader.nextString()
-                else -> reader.skipValue()
-            }
-        }
-        reader.endObject()
-
-        if (index !in 0 until expectedSize) return
-        if (success) {
-            if (image != null) out[index] = image
-        } else {
-            Log.w(TAG, "Batch item $index failed: ${error.orEmpty()}")
         }
     }
 
