@@ -1,8 +1,6 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.webtoon
 
 import android.content.res.Resources
-import android.graphics.Bitmap
-import android.os.Build
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
@@ -44,7 +42,6 @@ import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
-import java.io.ByteArrayOutputStream
 
 /**
  * Holder of the webtoon reader for a single page of a chapter.
@@ -311,31 +308,18 @@ class WebtoonPageHolder(
                             // KMK -->
                             val enhanceStart = System.currentTimeMillis()
                             // KMK <--
-                            val enhanced: Bitmap? = if (remoteUrl != null) {
-                                RemoteUpscaler.processUrl(remoteUrl, remoteHost, remotePort, sourceHeaders, statusCb)
+                            val enhanced: ByteArray? = if (remoteUrl != null) {
+                                RemoteUpscaler.processUrlRaw(remoteUrl, remoteHost, remotePort, sourceHeaders, statusCb)
                             } else {
                                 null
-                            } ?: RemoteUpscaler.process(sourceBytes, remoteHost, remotePort, statusCb)
-                            if (enhanced != null) {
-                                // Tall upscaled pages can exceed the WebP/GL texture limits —
-                                // clamp before encoding or compress() fails silently.
-                                val result = ImageEnhancementCache.clampToDisplayLimits(enhanced)
-                                val saved = ImageEnhancementCache.saveToCache(mangaId, chapterId, pageIndex, configHash, result, pageVariant)
-                                // Reuse the cached WebP for display instead of compressing twice.
-                                val displaySource = if (saved != null) {
-                                    Buffer().readFrom(saved.inputStream())
-                                } else {
-                                    val baos = ByteArrayOutputStream()
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                                        result.compress(Bitmap.CompressFormat.WEBP_LOSSY, 90, baos)
-                                    } else {
-                                        @Suppress("DEPRECATION")
-                                        result.compress(Bitmap.CompressFormat.WEBP, 90, baos)
-                                    }
-                                    Buffer().write(baos.toByteArray())
-                                }
+                            } ?: RemoteUpscaler.processRaw(sourceBytes, remoteHost, remotePort, statusCb)
+                            // Keep the server's encoded output: only its header is read, unless it exceeds the
+                            // WebP/GL texture limits and has to be decoded, clamped and re-encoded.
+                            val result = enhanced?.let(ImageEnhancementCache::displayableBytes)
+                            if (result != null) {
+                                ImageEnhancementCache.saveBytesToCache(mangaId, chapterId, pageIndex, configHash, result, pageVariant)
                                 withUIContext {
-                                    frame.setImage(displaySource, false, imageConfig(enhanced = false, alreadyUpscaled = true))
+                                    frame.setImage(Buffer().write(result), false, imageConfig(enhanced = false, alreadyUpscaled = true))
                                 }
                                 // KMK -->
                                 UpscaleStats.recordEnhanced(UpscaleStats.MODE_REMOTE, System.currentTimeMillis() - enhanceStart)

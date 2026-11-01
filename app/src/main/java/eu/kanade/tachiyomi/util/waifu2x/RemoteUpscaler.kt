@@ -116,7 +116,7 @@ object RemoteUpscaler {
                     sink.writeAll(encoded.copy())
                 }
             }
-            upload(body, encodedSize, host, port, onStatus)
+            upload(body, encodedSize, host, port, onStatus, ::decodeBitmap)
         } catch (e: Exception) {
             Log.e(TAG, "Remote upscaler failed: ${e.message}", e)
             onStatus("Remote enhancement failed")
@@ -137,7 +137,27 @@ object RemoteUpscaler {
         host: String,
         port: Int,
         onStatus: suspend (String) -> Unit = {},
-    ): Bitmap? = withContext(Dispatchers.IO) {
+    ): Bitmap? = uploadBytes(input, host, port, onStatus, ::decodeBitmap)
+
+    /**
+     * Like [process] with original bytes, but returns the server's encoded output (PNG/WebP)
+     * untouched, so callers can cache and show it without a decode/re-encode round trip on the
+     * device (see [ImageEnhancementCache.displayableBytes]).
+     */
+    suspend fun processRaw(
+        input: ByteArray,
+        host: String,
+        port: Int,
+        onStatus: suspend (String) -> Unit = {},
+    ): ByteArray? = uploadBytes(input, host, port, onStatus, ::readNonEmpty)
+
+    private suspend fun <T : Any> uploadBytes(
+        input: ByteArray,
+        host: String,
+        port: Int,
+        onStatus: suspend (String) -> Unit,
+        read: (BufferedSource) -> T?,
+    ): T? = withContext(Dispatchers.IO) {
         if (host.isBlank()) {
             Log.w(TAG, "Remote upscaler host is blank — skipping")
             return@withContext null
@@ -146,17 +166,18 @@ object RemoteUpscaler {
         val bytes = serverDecodableBytes(input) ?: return@withContext null
 
         onStatus("Connecting to $host:$port…")
-        upload(bytes.toRequestBody(octetStreamMediaType), bytes.size.toLong(), host, port, onStatus)
+        upload(bytes.toRequestBody(octetStreamMediaType), bytes.size.toLong(), host, port, onStatus, read)
     }
 
-    /** `POST /upscale` with [body] and decode the answer; shared by both [process] overloads. */
-    private suspend fun upload(
+    /** `POST /upscale` with [body] and [read] the answer; shared by [process] and [processRaw]. */
+    private suspend fun <T : Any> upload(
         body: RequestBody,
         size: Long,
         host: String,
         port: Int,
         onStatus: suspend (String) -> Unit,
-    ): Bitmap? {
+        read: (BufferedSource) -> T?,
+    ): T? {
         try {
             onStatus("Uploading image (${size / 1024} KB)…")
 
@@ -176,8 +197,8 @@ object RemoteUpscaler {
 
                 onStatus("Downloading result…")
 
-                // Decode response as bitmap straight from the socket — no byte[] copy of the image
-                val result = decodeBitmap(response.body.source())
+                // Read straight from the socket — a bitmap decode keeps no byte[] copy of the image
+                val result = read(response.body.source())
                 if (result != null) onStatus("Enhancement complete")
                 result
             }
@@ -212,7 +233,25 @@ object RemoteUpscaler {
         port: Int,
         sourceHeaders: Map<String, String> = emptyMap(),
         onStatus: suspend (String) -> Unit = {},
-    ): Bitmap? = withContext(Dispatchers.IO) {
+    ): Bitmap? = uploadUrl(imageUrl, host, port, sourceHeaders, onStatus, ::decodeBitmap)
+
+    /** Like [processUrl], but returns the server's encoded output untouched (see [processRaw]). */
+    suspend fun processUrlRaw(
+        imageUrl: String,
+        host: String,
+        port: Int,
+        sourceHeaders: Map<String, String> = emptyMap(),
+        onStatus: suspend (String) -> Unit = {},
+    ): ByteArray? = uploadUrl(imageUrl, host, port, sourceHeaders, onStatus, ::readNonEmpty)
+
+    private suspend fun <T : Any> uploadUrl(
+        imageUrl: String,
+        host: String,
+        port: Int,
+        sourceHeaders: Map<String, String>,
+        onStatus: suspend (String) -> Unit,
+        read: (BufferedSource) -> T?,
+    ): T? = withContext(Dispatchers.IO) {
         if (host.isBlank() || imageUrl.isBlank()) return@withContext null
 
         try {
@@ -233,7 +272,7 @@ object RemoteUpscaler {
                 }
 
                 onStatus("Downloading result…")
-                val result = decodeBitmap(response.body.source())
+                val result = read(response.body.source())
                 if (result != null) onStatus("Enhancement complete")
                 result
             }
@@ -522,6 +561,9 @@ object RemoteUpscaler {
             (at(0, 'R'.code, 'I'.code, 'F'.code, 'F'.code) && at(8, 'W'.code, 'E'.code, 'B'.code, 'P'.code)) || // WebP
             at(0, 'B'.code, 'M'.code) // BMP
     }
+
+    /** The whole response body, or null when the server sent nothing. */
+    private fun readNonEmpty(source: BufferedSource): ByteArray? = source.readByteArray().takeIf { it.isNotEmpty() }
 
     /**
      * Decode a PNG/WebP response body into an ARGB_8888 bitmap directly from the stream.

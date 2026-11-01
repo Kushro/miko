@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.util.waifu2x
 
 import android.content.Context
-import android.graphics.BitmapFactory
 import coil3.SingletonImageLoader
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
@@ -14,7 +13,6 @@ import eu.kanade.tachiyomi.data.coil.pageVariant
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
-import eu.kanade.tachiyomi.util.system.GLUtil
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -629,34 +627,14 @@ object ImageEnhancer {
     }
 
     /**
-     * Save raw batch result bytes to cache. Writes bytes directly (no re-encoding) unless the
-     * image exceeds the display limits, in which case it falls back to decode + clamp + save.
+     * Save raw batch result bytes to cache (see [ImageEnhancementCache.saveServerResult]).
      * Returns the byte count written on success, or 0 on failure.
      */
     private fun saveBatchResult(req: EnhanceRequest, configHash: String, bytes: ByteArray): Long {
         // KMK -->
-        val limit = minOf(GLUtil.DEVICE_TEXTURE_LIMIT, ImageEnhancementCache.MAX_WEBP_DIMENSION)
-        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
-        if (opts.outWidth > limit || opts.outHeight > limit) {
-            // Rare path: decode → clamp → save as WebP (server already clamps, so this is a safety net)
-            val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return 0L
-            val out = ImageEnhancementCache.clampToDisplayLimits(decoded)
-            return try {
-                val bytesOut = out.byteCount.toLong()
-                val saved = ImageEnhancementCache.saveToCache(req.mangaId, req.chapterId, req.pageIndex, configHash, out, req.pageVariant)
-                if (saved != null) bytesOut else 0L
-            } catch (e: Exception) {
-                logcat(LogPriority.ERROR, e) { "ImageEnhancer: Failed to cache (scaled) batch result for page ${req.pageIndex}" }
-                0L
-            } finally {
-                out.recycle()
-            }
-        }
-        // Fast path: write server bytes directly — no decode/re-encode, no quality loss
         return try {
-            val saved = ImageEnhancementCache.saveBytesToCache(req.mangaId, req.chapterId, req.pageIndex, configHash, bytes, req.pageVariant)
-            if (saved != null) bytes.size.toLong() else 0L
+            val saved = ImageEnhancementCache.saveServerResult(req.mangaId, req.chapterId, req.pageIndex, configHash, bytes, req.pageVariant)
+            saved?.length() ?: 0L
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e) { "ImageEnhancer: Failed to cache batch result for page ${req.pageIndex}" }
             0L

@@ -2,10 +2,12 @@ package eu.kanade.tachiyomi.util.waifu2x
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Build
 import eu.kanade.tachiyomi.util.system.GLUtil
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.atomic.AtomicLong
@@ -118,6 +120,43 @@ object ImageEnhancementCache {
         if (scaled != bitmap) bitmap.recycle()
         return scaled
     }
+
+    /**
+     * Remote server output ready to cache and display: [bytes] unchanged when the image fits
+     * the display/WebP limits (the usual case — only the header is read), otherwise decoded,
+     * clamped and re-encoded as WebP. Null when the bytes can't be decoded.
+     */
+    fun displayableBytes(bytes: ByteArray): ByteArray? {
+        val limit = minOf(GLUtil.DEVICE_TEXTURE_LIMIT, MAX_WEBP_DIMENSION)
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+        if (opts.outWidth <= limit && opts.outHeight <= limit) return bytes
+
+        // Rare path (the server already clamps): decode → clamp → WebP
+        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+        val out = clampToDisplayLimits(decoded)
+        return try {
+            val baos = ByteArrayOutputStream()
+            val ok = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                out.compress(Bitmap.CompressFormat.WEBP_LOSSY, 90, baos)
+            } else {
+                @Suppress("DEPRECATION")
+                out.compress(Bitmap.CompressFormat.WEBP, 90, baos)
+            }
+            if (ok) baos.toByteArray() else null
+        } finally {
+            out.recycle()
+        }
+    }
+
+    /**
+     * Cache remote server output via [displayableBytes] + [saveBytesToCache]: no decode or
+     * re-encode unless the image exceeds the display limits. Returns the cached file, or null.
+     */
+    fun saveServerResult(mangaId: Long, chapterId: Long, pageIndex: Int, configHash: String, bytes: ByteArray, pageVariant: String = ""): File? {
+        val out = displayableBytes(bytes) ?: return null
+        return saveBytesToCache(mangaId, chapterId, pageIndex, configHash, out, pageVariant)
+    }
     // KMK <--
 
     /**
@@ -178,7 +217,7 @@ object ImageEnhancementCache {
 
     /**
      * Write raw image bytes directly to the cache, using the same atomic temp-rename pattern.
-     * Used by the batch worker to avoid re-encoding server output (PNG → WebP transcoding).
+     * Used for remote server output (see [saveServerResult]) to avoid re-encoding it (PNG → WebP transcoding).
      * The file keeps the ".webp" extension for naming consistency — decoders sniff the actual type.
      */
     fun saveBytesToCache(mangaId: Long, chapterId: Long, pageIndex: Int, configHash: String, bytes: ByteArray, pageVariant: String = ""): File? {
