@@ -32,6 +32,7 @@ import java.io.ByteArrayInputStream
 import java.io.InputStreamReader
 import java.net.ConnectException
 import java.net.SocketTimeoutException
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /**
@@ -127,7 +128,8 @@ object RemoteUpscaler {
     /**
      * Send an image's original encoded bytes (JPEG/PNG/WebP/…) to the remote upscaler server and
      * receive the upscaled bitmap. The server decodes by content, so formats it reads are sent
-     * unchanged; the rest (AVIF, HEIF, JXL…) are converted to PNG first (see [serverDecodableBytes]).
+     * unchanged; the rest (e.g. AVIF on servers that don't list it) are converted to PNG first
+     * (see [serverDecodableBytes]).
      *
      * @param input Encoded image bytes, exactly as read from the source or downloaded file
      * @return Upscaled bitmap, or null on any failure
@@ -143,7 +145,7 @@ object RemoteUpscaler {
             return@withContext null
         }
         if (input.isEmpty()) return@withContext null
-        val bytes = serverDecodableBytes(input) ?: return@withContext null
+        val bytes = serverDecodableBytes(input, host, port) ?: return@withContext null
 
         onStatus("Connecting to $host:$port…")
         upload(bytes.toRequestBody(octetStreamMediaType), bytes.size.toLong(), host, port, onStatus)
@@ -314,7 +316,7 @@ object RemoteUpscaler {
         }
         onStatus("Uploading batch of ${images.size} image(s)…")
         // An item that can't be converted is sent as-is: the server fails just that index.
-        val uploads = images.map { serverDecodableBytes(it) ?: it }
+        val uploads = images.map { serverDecodableBytes(it, host, port) ?: it }
         runBatch("/upscale/batch", BatchImagesBody(uploads), uploads.size, host, port, onStatus, onResult)
     }
 
@@ -487,15 +489,38 @@ object RemoteUpscaler {
     }
 
     /**
+     * Input formats Miko-Kagura's decoder reads when its `/status` doesn't say (older servers):
+     * the Rust `image` crate as built there, which can't read AVIF, HEIF or JXL.
+     */
+    internal val DEFAULT_INPUT_FORMATS = setOf("jpeg", "png", "gif", "webp", "bmp")
+
+    /**
+     * `input_formats` from each server's `/status`, keyed by `host:port` and refreshed by every
+     * [checkStatus]. A server whose status lacks the field maps to [DEFAULT_INPUT_FORMATS].
+     */
+    private val inputFormats = ConcurrentHashMap<String, Set<String>>()
+
+    /**
      * [bytes] unchanged when the server can decode them, otherwise the image re-encoded as PNG,
      * or null when it can't be decoded on the device either.
      *
-     * Miko-Kagura decodes with the Rust `image` crate, which reads JPEG, PNG, GIF, WebP and BMP
-     * but not AVIF, HEIF or JXL — formats sources do serve and the reader shows through
-     * [ImageDecoder]. Those are decoded here the same way and uploaded as PNG.
+     * Sources do serve formats some servers can't read (AVIF, HEIF, JXL…); the reader shows
+     * them through [ImageDecoder], so they are decoded here the same way and uploaded as PNG.
+     * What the server reads comes from its `/status` (see [inputFormats]), fetched once here
+     * when only it can decide.
      */
-    private fun serverDecodableBytes(bytes: ByteArray): ByteArray? {
-        if (isServerDecodable(bytes)) return bytes
+    private suspend fun serverDecodableBytes(bytes: ByteArray, host: String, port: Int): ByteArray? {
+        val format = sniffFormat(bytes)
+        if (format in DEFAULT_INPUT_FORMATS) return bytes
+        if (format != null) {
+            val key = "$host:$port"
+            if (!inputFormats.containsKey(key)) {
+                // Unreachable now: assume the default list until a later checkStatus succeeds.
+                checkStatus(host, port) ?: inputFormats.putIfAbsent(key, DEFAULT_INPUT_FORMATS)
+            }
+            if (format in inputFormats[key].orEmpty()) return bytes
+        }
+
         val bitmap = try {
             ImageDecoder.newInstance(ByteArrayInputStream(bytes))?.decode()
                 ?: BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
@@ -512,16 +537,51 @@ object RemoteUpscaler {
         }
     }
 
-    /** Whether the magic bytes are a format Miko-Kagura's decoder reads (see [serverDecodableBytes]). */
-    internal fun isServerDecodable(bytes: ByteArray): Boolean {
+    /** Whether [bytes] sniff as one of the server's [formats] (see [serverDecodableBytes]). */
+    internal fun isServerDecodable(bytes: ByteArray, formats: Set<String> = DEFAULT_INPUT_FORMATS): Boolean =
+        sniffFormat(bytes)?.let { it in formats } == true
+
+    /**
+     * The image format of [bytes] by magic number, named as in the server's `input_formats`
+     * ("jpeg", "png", "gif", "webp", "bmp", "tiff", "avif", "heif", "jxl"), or null if unknown.
+     */
+    internal fun sniffFormat(bytes: ByteArray): String? {
         fun at(offset: Int, vararg magic: Int) =
             bytes.size >= offset + magic.size && magic.indices.all { bytes[offset + it].toInt() and 0xFF == magic[it] }
-        return at(0, 0xFF, 0xD8, 0xFF) || // JPEG
-            at(0, 0x89, 'P'.code, 'N'.code, 'G'.code) || // PNG
-            at(0, 'G'.code, 'I'.code, 'F'.code, '8'.code) || // GIF87a / GIF89a
-            (at(0, 'R'.code, 'I'.code, 'F'.code, 'F'.code) && at(8, 'W'.code, 'E'.code, 'B'.code, 'P'.code)) || // WebP
-            at(0, 'B'.code, 'M'.code) // BMP
+        fun ascii(offset: Int, text: String) = at(offset, *IntArray(text.length) { text[it].code })
+        return when {
+            at(0, 0xFF, 0xD8, 0xFF) -> "jpeg"
+            at(0, 0x89, 'P'.code, 'N'.code, 'G'.code) -> "png"
+            ascii(0, "GIF8") -> "gif" // GIF87a / GIF89a
+            ascii(0, "RIFF") && ascii(8, "WEBP") -> "webp"
+            ascii(0, "BM") -> "bmp"
+            ascii(0, "II*\u0000") || ascii(0, "MM\u0000*") -> "tiff"
+            at(0, 0xFF, 0x0A) || at(0, 0, 0, 0, 0x0C, 'J'.code, 'X'.code, 'L'.code, ' '.code) -> "jxl"
+            ascii(4, "ftyp") -> isoBmffImageFormat(bytes)
+            else -> null
+        }
     }
+
+    /**
+     * "avif" or "heif" for an ISO-BMFF `ftyp` box, from its major and compatible brands (AVIF
+     * files often carry the generic "mif1" major brand and list "avif" as compatible).
+     */
+    private fun isoBmffImageFormat(bytes: ByteArray): String? {
+        val boxSize = ((bytes[0].toInt() and 0xFF) shl 24) or ((bytes[1].toInt() and 0xFF) shl 16) or
+            ((bytes[2].toInt() and 0xFF) shl 8) or (bytes[3].toInt() and 0xFF)
+        val end = minOf(if (boxSize >= 16) boxSize else 16, bytes.size)
+        // Major brand at 8, minor version at 12, compatible brands from 16.
+        val brands = (listOf(8) + (16 until end - 3 step 4))
+            .filter { it + 4 <= bytes.size }
+            .map { String(bytes, it, 4, Charsets.US_ASCII) }
+        return when {
+            brands.any { it == "avif" || it == "avis" } -> "avif"
+            brands.any { it in HEIF_BRANDS } -> "heif"
+            else -> null
+        }
+    }
+
+    private val HEIF_BRANDS = setOf("heic", "heix", "heim", "heis", "hevc", "hevx", "mif1", "msf1")
 
     /**
      * Decode a PNG/WebP response body into an ARGB_8888 bitmap directly from the stream.
@@ -599,7 +659,9 @@ object RemoteUpscaler {
 
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@withContext null
-                parseStatusJson(response.body.string())
+                parseStatusJson(response.body.string()).also { status ->
+                    inputFormats["$host:$port"] = parseInputFormats(status["input_formats"]) ?: DEFAULT_INPUT_FORMATS
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Remote upscaler status check failed: ${e.message}")
@@ -607,13 +669,28 @@ object RemoteUpscaler {
         }
     }
 
-    /** Parse the flat /status JSON object into a plain map (JSONObject.NULL becomes null). */
+    /** `input_formats` from /status as lowercase names, or null when absent or malformed. */
+    internal fun parseInputFormats(value: Any?): Set<String>? {
+        val list = value as? List<*> ?: return null
+        return list.mapNotNull { (it as? String)?.takeIf(String::isNotBlank)?.lowercase() }
+            .toSet()
+            .takeIf { it.isNotEmpty() }
+    }
+
+    /** Parse the flat /status JSON object into a plain map (JSONObject.NULL becomes null, arrays become lists). */
     private fun parseStatusJson(json: String): Map<String, Any?> {
         return try {
             val obj = JSONObject(json)
             buildMap {
                 obj.keys().forEach { key ->
-                    put(key, obj.get(key).takeIf { it != JSONObject.NULL })
+                    put(
+                        key,
+                        when (val value = obj.get(key)) {
+                            JSONObject.NULL -> null
+                            is JSONArray -> List(value.length()) { value.opt(it).takeIf { v -> v != JSONObject.NULL } }
+                            else -> value
+                        },
+                    )
                 }
             }
         } catch (e: Exception) {
