@@ -186,7 +186,26 @@ object DownloadEnhancer {
             // it here and re-encode it as a (larger) PNG first.
             val originalBytes = imageFile.openInputStream().use { it.readBytes() }
 
-            val processed = RemoteUpscaler.process(originalBytes, host, port)
+            val raw = RemoteUpscaler.processRaw(originalBytes, host, port) ?: return@withContext false
+
+            // Fast path: the server's output already has this file's format and nothing needs the
+            // pixels (no ink filter) — write the bytes as they are, reading only the header.
+            val extension = imageFile.name?.substringAfterLast('.', "")?.lowercase()
+            val sameFormat = when (RemoteUpscaler.sniffFormat(raw)) {
+                "png" -> extension == "png"
+                "webp" -> extension == "webp"
+                "jpeg" -> extension == "jpg" || extension == "jpeg"
+                else -> false
+            }
+            if (sameFormat && !preferences.inkFilter().get()) {
+                val fitted = ImageEnhancementCache.displayableBytes(raw)
+                if (fitted === raw) {
+                    imageFile.openOutputStream().use { it.write(raw) }
+                    return@withContext true
+                }
+            }
+
+            val processed = BitmapFactory.decodeByteArray(raw, 0, raw.size)
             if (processed != null) {
                 var result = ImageFilter.applyInkFilterIfEnabled(processed, Injekt.get())
 

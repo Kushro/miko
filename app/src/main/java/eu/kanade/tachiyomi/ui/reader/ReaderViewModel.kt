@@ -72,6 +72,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
@@ -81,12 +82,14 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import tachiyomi.core.common.preference.toggle
 import tachiyomi.core.common.storage.UniFileTempFileManager
@@ -500,19 +503,31 @@ class ReaderViewModel @JvmOverloads constructor(
 
         // KMK --> Keep the overlay counters and the page-slider notches fresh while visible,
         // even when the user isn't turning pages (downloads/upscales finishing in background).
+        // Each pass stats cache files, so it only runs while something shows the result: the
+        // overlay (its preference) or the slider (the reader menu). Unchanged passes back off.
         viewModelScope.launchIO {
+            val overlayType = readerPreferences.enhancementOverlayType()
+            val menuChanges = state.map { it.menuVisible }.distinctUntilChanged().drop(1)
+            var interval = PRELOAD_POLL_MIN_MS
             while (true) {
+                val overlayOn = overlayType.get() > EnhancementOverlayType.OFF
+                val menuVisible = state.value.menuVisible
+                if (!overlayOn && !menuVisible) {
+                    combine(state.map { it.menuVisible }, overlayType.changes()) { menu, type ->
+                        menu || type > EnhancementOverlayType.OFF
+                    }.first { it }
+                    interval = PRELOAD_POLL_MIN_MS
+                    continue
+                }
+
                 val page = lastSelectedPage
                 val pages = lastSelectedPages
-                val status = if (readerPreferences.enhancementOverlayType().get() > EnhancementOverlayType.OFF) {
-                    if (page != null && pages != null) computePreloadStatus(page, pages) else null
-                } else {
-                    null
-                }
-                val (downloadNotch, upscaleNotch) = if (page != null && pages != null) {
-                    computeNotchFractions(page, pages)
-                } else {
-                    null to null
+                val status = if (overlayOn && page != null && pages != null) computePreloadStatus(page, pages) else null
+                // Notches only show on the menu's slider; while it's hidden keep the last values.
+                val (downloadNotch, upscaleNotch) = when {
+                    !menuVisible -> state.value.downloadNotchFraction to state.value.upscaleNotchFraction
+                    page != null && pages != null -> computeNotchFractions(page, pages)
+                    else -> null to null
                 }
                 if (state.value.preloadStatus != status ||
                     state.value.downloadNotchFraction != downloadNotch ||
@@ -525,8 +540,14 @@ class ReaderViewModel @JvmOverloads constructor(
                             upscaleNotchFraction = upscaleNotch,
                         )
                     }
+                    interval = PRELOAD_POLL_MIN_MS
+                } else {
+                    interval = (interval * 2).coerceAtMost(PRELOAD_POLL_MAX_MS)
                 }
-                delay(500)
+                // A page change or the menu opening/closing refreshes right away.
+                withTimeoutOrNull(interval) {
+                    merge(preloadRefresh.receiveAsFlow(), menuChanges.map { }).first()
+                }
             }
         }
         // KMK <--
@@ -900,6 +921,9 @@ class ReaderViewModel @JvmOverloads constructor(
     @Volatile
     private var lastSelectedPages: List<ReaderPage>? = null
 
+    /** Wakes the preloading-status/notch poll early (page changed). */
+    private val preloadRefresh = Channel<Unit>(Channel.CONFLATED)
+
     /**
      * Enqueues the current page and everything after it for background enhancement (on-device
      * or remote). The window is intentionally unbounded: each page is enqueued only once its
@@ -913,6 +937,7 @@ class ReaderViewModel @JvmOverloads constructor(
         // its counters between page changes (background upscales completing).
         lastSelectedPage = currentPage
         lastSelectedPages = pages
+        preloadRefresh.trySend(Unit)
 
         val mode = readerPreferences.enhancementMode().get()
         if (mode == EnhancementMode.NONE || readerPreferences.enhanceOnDownload().get()) return
@@ -2137,3 +2162,9 @@ class ReaderViewModel @JvmOverloads constructor(
         // MIKO <--
     }
 }
+
+// KMK -->
+/** Poll interval of the preloading-status/notch refresh: reset on change, doubled while idle. */
+private const val PRELOAD_POLL_MIN_MS = 500L
+private const val PRELOAD_POLL_MAX_MS = 4_000L
+// KMK <--
