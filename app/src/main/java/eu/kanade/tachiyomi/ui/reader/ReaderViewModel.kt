@@ -509,8 +509,8 @@ class ReaderViewModel @JvmOverloads constructor(
                 } else {
                     null
                 }
-                val (downloadNotch, upscaleNotch) = if (pages != null) {
-                    computeNotchFractions(pages)
+                val (downloadNotch, upscaleNotch) = if (page != null && pages != null) {
+                    computeNotchFractions(page, pages)
                 } else {
                     null to null
                 }
@@ -1035,16 +1035,27 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     /**
-     * Chapter-wide fractions for the page-slider notch markers: how much of the chapter has
-     * been downloaded (page preload frontier) and how much has been upscaled. Either value is
-     * null when its marker is disabled or not applicable, which hides that notch.
+     * Slider positions for the page-slider notch markers: how far ahead of [currentPage] the
+     * pages are downloaded, and how far they are upscaled. Each notch marks the last page of the
+     * unbroken run starting at the current page, on the slider's own scale (page index over
+     * `total - 1`, like the thumb), so resuming mid-chapter doesn't draw it near the start.
+     * Either value is null when its marker is disabled, not applicable, or the current page
+     * itself isn't ready yet, which hides that notch.
      */
-    private fun computeNotchFractions(pages: List<ReaderPage>): Pair<Float?, Float?> {
+    private fun computeNotchFractions(currentPage: ReaderPage, pages: List<ReaderPage>): Pair<Float?, Float?> {
         val total = pages.size
-        if (total == 0) return null to null
+        val start = pages.indexOf(currentPage)
+        if (total == 0 || start == -1) return null to null
+
+        fun frontier(isDone: (ReaderPage) -> Boolean): Float? {
+            if (!isDone(pages[start])) return null
+            var last = start
+            while (last + 1 < total && isDone(pages[last + 1])) last++
+            return if (total == 1) 1f else last.toFloat() / (total - 1)
+        }
 
         val downloadFraction = if (readerPreferences.showDownloadNotch().get()) {
-            pages.count { it.status == Page.State.Ready }.toFloat() / total
+            frontier { it.status == Page.State.Ready }
         } else {
             null
         }
@@ -1054,7 +1065,7 @@ class ReaderViewModel @JvmOverloads constructor(
         val upscaleFraction = if (liveUpscaling && readerPreferences.showUpscaleNotch().get()) {
             ImageEnhancementCache.init(Injekt.get<Application>())
             val configHash = currentEnhancementConfigHash()
-            pages.count { target ->
+            frontier { target ->
                 val mangaId = target.chapter.chapter.manga_id ?: -1L
                 val chapterId = target.chapter.chapter.id ?: -1L
                 val variant = target.enhancementKeySuffix
@@ -1065,7 +1076,7 @@ class ReaderViewModel @JvmOverloads constructor(
                         ImageEnhancementCache.isCached(mangaId, chapterId, target.index, configHash, variant) ||
                             ImageEnhancementCache.isSkipped(mangaId, chapterId, target.index, configHash, variant)
                 }
-            }.toFloat() / total
+            }
         } else {
             null
         }
