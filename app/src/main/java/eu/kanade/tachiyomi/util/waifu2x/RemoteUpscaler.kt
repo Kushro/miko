@@ -27,6 +27,8 @@ import okio.BufferedSink
 import okio.BufferedSource
 import org.json.JSONArray
 import org.json.JSONObject
+import tachiyomi.decoder.ImageDecoder
+import java.io.ByteArrayInputStream
 import java.io.InputStreamReader
 import java.net.ConnectException
 import java.net.SocketTimeoutException
@@ -124,8 +126,8 @@ object RemoteUpscaler {
 
     /**
      * Send an image's original encoded bytes (JPEG/PNG/WebP/…) to the remote upscaler server and
-     * receive the upscaled bitmap. The server decodes by content, so nothing is re-encoded on the
-     * device and the upload is the size of the source file.
+     * receive the upscaled bitmap. The server decodes by content, so formats it reads are sent
+     * unchanged; the rest (AVIF, HEIF, JXL…) are converted to PNG first (see [serverDecodableBytes]).
      *
      * @param input Encoded image bytes, exactly as read from the source or downloaded file
      * @return Upscaled bitmap, or null on any failure
@@ -141,9 +143,10 @@ object RemoteUpscaler {
             return@withContext null
         }
         if (input.isEmpty()) return@withContext null
+        val bytes = serverDecodableBytes(input) ?: return@withContext null
 
         onStatus("Connecting to $host:$port…")
-        upload(input.toRequestBody(octetStreamMediaType), input.size.toLong(), host, port, onStatus)
+        upload(bytes.toRequestBody(octetStreamMediaType), bytes.size.toLong(), host, port, onStatus)
     }
 
     /** `POST /upscale` with [body] and decode the answer; shared by both [process] overloads. */
@@ -310,7 +313,9 @@ object RemoteUpscaler {
             return
         }
         onStatus("Uploading batch of ${images.size} image(s)…")
-        runBatch("/upscale/batch", BatchImagesBody(images), images.size, host, port, onStatus, onResult)
+        // An item that can't be converted is sent as-is: the server fails just that index.
+        val uploads = images.map { serverDecodableBytes(it) ?: it }
+        runBatch("/upscale/batch", BatchImagesBody(uploads), uploads.size, host, port, onStatus, onResult)
     }
 
     /** Streaming form of [processBatchUrl]; same [onResult] contract as [streamBatch]. */
@@ -479,6 +484,43 @@ object RemoteUpscaler {
             Log.w(TAG, "Batch item $index failed: ${error.orEmpty()}")
             deliver(index, null)
         }
+    }
+
+    /**
+     * [bytes] unchanged when the server can decode them, otherwise the image re-encoded as PNG,
+     * or null when it can't be decoded on the device either.
+     *
+     * Miko-Kagura decodes with the Rust `image` crate, which reads JPEG, PNG, GIF, WebP and BMP
+     * but not AVIF, HEIF or JXL — formats sources do serve and the reader shows through
+     * [ImageDecoder]. Those are decoded here the same way and uploaded as PNG.
+     */
+    private fun serverDecodableBytes(bytes: ByteArray): ByteArray? {
+        if (isServerDecodable(bytes)) return bytes
+        val bitmap = try {
+            ImageDecoder.newInstance(ByteArrayInputStream(bytes))?.decode()
+                ?: BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not decode ${bytes.size}-byte image for upload: ${e.message}")
+            null
+        } ?: return null
+        return try {
+            val encoded = Buffer()
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, encoded.outputStream())
+            encoded.readByteArray()
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    /** Whether the magic bytes are a format Miko-Kagura's decoder reads (see [serverDecodableBytes]). */
+    internal fun isServerDecodable(bytes: ByteArray): Boolean {
+        fun at(offset: Int, vararg magic: Int) =
+            bytes.size >= offset + magic.size && magic.indices.all { bytes[offset + it].toInt() and 0xFF == magic[it] }
+        return at(0, 0xFF, 0xD8, 0xFF) || // JPEG
+            at(0, 0x89, 'P'.code, 'N'.code, 'G'.code) || // PNG
+            at(0, 'G'.code, 'I'.code, 'F'.code, '8'.code) || // GIF87a / GIF89a
+            (at(0, 'R'.code, 'I'.code, 'F'.code, 'F'.code) && at(8, 'W'.code, 'E'.code, 'B'.code, 'P'.code)) || // WebP
+            at(0, 'B'.code, 'M'.code) // BMP
     }
 
     /**
