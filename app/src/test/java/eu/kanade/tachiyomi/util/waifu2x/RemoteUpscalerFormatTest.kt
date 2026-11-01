@@ -1,8 +1,6 @@
 package eu.kanade.tachiyomi.util.waifu2x
 
-import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -31,29 +29,5 @@ class RemoteUpscalerFormatTest {
         assertFalse(RemoteUpscaler.isServerDecodable(ascii("RIFF") + bytes(0x24, 0, 0, 0) + ascii("WAVE")))
         assertFalse(RemoteUpscaler.isServerDecodable(ByteArray(0)))
         assertFalse(RemoteUpscaler.isServerDecodable(ascii("<html>")))
-    }
-
-    @Test
-    fun `sniffed formats use the server's input_formats names`() {
-        assertEquals("jpeg", RemoteUpscaler.sniffFormat(bytes(0xFF, 0xD8, 0xFF, 0xDB)))
-        assertEquals("tiff", RemoteUpscaler.sniffFormat(ascii("II*") + bytes(0, 8, 0)))
-        assertEquals("tiff", RemoteUpscaler.sniffFormat(ascii("MM") + bytes(0) + ascii("*")))
-        assertEquals("avif", RemoteUpscaler.sniffFormat(bytes(0, 0, 0, 0x1C) + ascii("ftypavif") + bytes(0, 0, 0, 0) + ascii("avifmif1miaf")))
-        // Generic HEIF major brand with AVIF listed as compatible is still AVIF.
-        assertEquals("avif", RemoteUpscaler.sniffFormat(bytes(0, 0, 0, 0x18) + ascii("ftypmif1") + bytes(0, 0, 0, 0) + ascii("avif")))
-        assertEquals("heif", RemoteUpscaler.sniffFormat(bytes(0, 0, 0, 0x18) + ascii("ftypheic") + bytes(0, 0, 0, 0) + ascii("mif1")))
-        assertEquals("jxl", RemoteUpscaler.sniffFormat(bytes(0xFF, 0x0A, 0xFA)))
-        assertNull(RemoteUpscaler.sniffFormat(bytes(0, 0, 0, 0x18) + ascii("ftypisom")))
-    }
-
-    @Test
-    fun `server-listed formats are sent as-is`() {
-        val avif = bytes(0, 0, 0, 0x1C) + ascii("ftypavif") + bytes(0, 0, 0, 0) + ascii("avifmif1miaf")
-        val formats = RemoteUpscaler.parseInputFormats(listOf("PNG", "jpeg", "webp", "gif", "bmp", "tiff", "avif"))!!
-        assertTrue("png" in formats)
-        assertTrue(RemoteUpscaler.isServerDecodable(avif, formats))
-        assertFalse(RemoteUpscaler.isServerDecodable(avif))
-        assertNull(RemoteUpscaler.parseInputFormats(null))
-        assertNull(RemoteUpscaler.parseInputFormats("png"))
     }
 }

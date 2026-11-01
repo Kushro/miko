@@ -191,10 +191,12 @@ object DownloadEnhancer {
             // Fast path: the server's output already has this file's format and nothing needs the
             // pixels (no ink filter) — write the bytes as they are, reading only the header.
             val extension = imageFile.name?.substringAfterLast('.', "")?.lowercase()
-            val sameFormat = when (RemoteUpscaler.sniffFormat(raw)) {
-                "png" -> extension == "png"
-                "webp" -> extension == "webp"
-                "jpeg" -> extension == "jpg" || extension == "jpeg"
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
+            val sameFormat = when (bounds.outMimeType) {
+                "image/png" -> extension == "png"
+                "image/webp" -> extension == "webp"
+                "image/jpeg" -> extension == "jpg" || extension == "jpeg"
                 else -> false
             }
             if (sameFormat && !preferences.inkFilter().get()) {
