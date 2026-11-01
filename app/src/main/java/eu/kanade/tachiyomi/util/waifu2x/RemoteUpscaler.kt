@@ -498,7 +498,46 @@ object RemoteUpscaler {
      * `input_formats` from each server's `/status`, keyed by `host:port` and refreshed by every
      * [checkStatus]. A server whose status lacks the field maps to [DEFAULT_INPUT_FORMATS].
      */
-    private val inputFormats = ConcurrentHashMap<String, Set<String>>()
+    private val inputFormats = ConcurrentHashMap<String, InputFormats>()
+
+    /**
+     * A server's input formats. [retryAt] is set on the [DEFAULT_INPUT_FORMATS] stand-in used
+     * after `/status` failed (e.g. the PC was asleep): past it, the next upload asks again.
+     * Lists the server reported keep no expiry; [checkStatus] refreshes them.
+     */
+    private class InputFormats(val formats: Set<String>, val retryAt: Long? = null)
+
+    /** How long a failed `/status` lookup's stand-in is used before asking the server again. */
+    internal const val STATUS_RETRY_MS = 60_000L
+
+    /** Monotonic milliseconds; replaceable in tests. */
+    internal var nowMs: () -> Long = { System.nanoTime() / 1_000_000 }
+
+    /**
+     * Claims the `/status` lookup for [key] when nothing usable is cached: stores the expiring
+     * stand-in and returns true, so concurrent and later uploads use it rather than also asking
+     * until it expires. False when a reported list or an unexpired stand-in is already cached.
+     */
+    internal fun claimStatusLookup(key: String): Boolean {
+        var claimed = false
+        inputFormats.compute(key) { _, cached ->
+            if (cached != null && (cached.retryAt == null || nowMs() < cached.retryAt)) {
+                cached
+            } else {
+                claimed = true
+                InputFormats(DEFAULT_INPUT_FORMATS, retryAt = nowMs() + STATUS_RETRY_MS)
+            }
+        }
+        return claimed
+    }
+
+    /** Formats cached for [key], or [DEFAULT_INPUT_FORMATS] when none are. */
+    internal fun inputFormatsFor(key: String): Set<String> = inputFormats[key]?.formats ?: DEFAULT_INPUT_FORMATS
+
+    /** Caches what a successful `/status` of [key] reported (see [parseInputFormats]). */
+    internal fun recordInputFormats(key: String, status: Map<String, Any?>) {
+        inputFormats[key] = InputFormats(parseInputFormats(status["input_formats"]) ?: DEFAULT_INPUT_FORMATS)
+    }
 
     /**
      * [bytes] unchanged when the server can decode them, otherwise the image re-encoded as PNG,
@@ -506,19 +545,17 @@ object RemoteUpscaler {
      *
      * Sources do serve formats some servers can't read (AVIF, HEIF, JXL…); the reader shows
      * them through [ImageDecoder], so they are decoded here the same way and uploaded as PNG.
-     * What the server reads comes from its `/status` (see [inputFormats]), fetched once here
-     * when only it can decide.
+     * What the server reads comes from its `/status` (see [inputFormats]), fetched here when
+     * only it can decide and nothing usable is cached (see [claimStatusLookup]).
      */
     private suspend fun serverDecodableBytes(bytes: ByteArray, host: String, port: Int): ByteArray? {
         val format = sniffFormat(bytes)
         if (format in DEFAULT_INPUT_FORMATS) return bytes
         if (format != null) {
             val key = "$host:$port"
-            if (!inputFormats.containsKey(key)) {
-                // Unreachable now: assume the default list until a later checkStatus succeeds.
-                checkStatus(host, port) ?: inputFormats.putIfAbsent(key, DEFAULT_INPUT_FORMATS)
-            }
-            if (format in inputFormats[key].orEmpty()) return bytes
+            // A failed lookup leaves the claimed stand-in, retried after STATUS_RETRY_MS.
+            if (claimStatusLookup(key)) checkStatus(host, port)
+            if (format in inputFormatsFor(key)) return bytes
         }
 
         val bitmap = try {
@@ -660,7 +697,7 @@ object RemoteUpscaler {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@withContext null
                 parseStatusJson(response.body.string()).also { status ->
-                    inputFormats["$host:$port"] = parseInputFormats(status["input_formats"]) ?: DEFAULT_INPUT_FORMATS
+                    recordInputFormats("$host:$port", status)
                 }
             }
         } catch (e: Exception) {

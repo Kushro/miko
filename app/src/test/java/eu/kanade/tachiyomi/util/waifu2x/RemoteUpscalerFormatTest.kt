@@ -56,4 +56,30 @@ class RemoteUpscalerFormatTest {
         assertNull(RemoteUpscaler.parseInputFormats(null))
         assertNull(RemoteUpscaler.parseInputFormats("png"))
     }
+
+    @Test
+    fun `a failed status lookup is retried after the expiry, a reported list is kept`() {
+        var now = 1_000L
+        val realClock = RemoteUpscaler.nowMs
+        RemoteUpscaler.nowMs = { now }
+        try {
+            val key = "test-expiry:8282"
+            assertTrue(RemoteUpscaler.claimStatusLookup(key))
+            // /status failed: the stand-in is the built-in list, and nobody asks again yet.
+            assertEquals(RemoteUpscaler.DEFAULT_INPUT_FORMATS, RemoteUpscaler.inputFormatsFor(key))
+            now += RemoteUpscaler.STATUS_RETRY_MS - 1
+            assertFalse(RemoteUpscaler.claimStatusLookup(key))
+            now += 1
+            assertTrue(RemoteUpscaler.claimStatusLookup(key))
+
+            // /status answered: its list is used and never expires.
+            RemoteUpscaler.recordInputFormats(key, mapOf("input_formats" to listOf("png", "avif")))
+            assertEquals(setOf("png", "avif"), RemoteUpscaler.inputFormatsFor(key))
+            now += 10 * RemoteUpscaler.STATUS_RETRY_MS
+            assertFalse(RemoteUpscaler.claimStatusLookup(key))
+            assertEquals(setOf("png", "avif"), RemoteUpscaler.inputFormatsFor(key))
+        } finally {
+            RemoteUpscaler.nowMs = realClock
+        }
+    }
 }
