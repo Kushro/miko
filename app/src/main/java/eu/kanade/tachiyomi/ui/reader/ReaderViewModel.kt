@@ -544,9 +544,9 @@ class ReaderViewModel @JvmOverloads constructor(
                 } else {
                     interval = (interval * 2).coerceAtMost(PRELOAD_POLL_MAX_MS)
                 }
-                // A page change or the menu opening/closing refreshes right away.
+                // A page change, the menu opening/closing or the overlay toggling refreshes right away.
                 withTimeoutOrNull(interval) {
-                    merge(preloadRefresh.receiveAsFlow(), menuChanges.map { }).first()
+                    merge(preloadRefresh.receiveAsFlow(), menuChanges.map { }, overlayType.changes().drop(1).map { }).first()
                 }
             }
         }
